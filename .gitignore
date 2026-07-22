@@ -1,0 +1,22 @@
+.venv/
+.cache/
+.pytest_cache/
+__pycache__/
+
+.env
+.env.*
+
+**/node_modules/
+**/.next/
+**/out/
+
+dist/
+build/
+
+.vscode/
+.idea/
+
+*.log
+
+# Data lake runtime caches (Nominatim geocoding results)
+floatchat/.data_lake/.gazetteer_cache/

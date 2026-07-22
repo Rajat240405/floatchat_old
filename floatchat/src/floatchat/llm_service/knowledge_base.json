@@ -1,0 +1,142 @@
+[
+  {
+    "id": "what_is_argo",
+    "question": "What is Argo?",
+    "keywords": ["argo", "program", "global", "array", "ocean", "floats"],
+    "answer": "Argo is an international program that maintains a global array of ~4000 autonomous profiling floats. Each float drifts in the ocean and measures ocean properties. The program is a collaborative partnership of more than 30 nations and is a core component of the Global Ocean Observing System (GOOS). Data are freely available without restrictions. The name Argo was chosen to emphasize complementarity with the Jason satellite altimeters, referencing Greek mythology.",
+    "category": "general"
+  },
+  {
+    "id": "how_argo_float_works",
+    "question": "How does an Argo float work?",
+    "keywords": ["how does argo float work", "cycle", "profile", "drift", "buoyancy", "mechanism"],
+    "answer": "An Argo float operates on a ~10-day cycle. It drifts at a parking depth, typically 1000 meters, then descends to 2000 meters and ascends to the surface measuring pressure, temperature, and salinity (and BGC sensors if equipped). At the surface it obtains GPS fix and transmits data via Argos or Iridium satellites to Global Data Assembly Centres (GDACs). After transmission it descends back to parking depth to start a new cycle. The float controls buoyancy to move vertically but drifts horizontally with currents.",
+    "category": "operation"
+  },
+  {
+    "id": "core_vs_bgc",
+    "question": "What is the difference between Core and BGC Argo floats?",
+    "keywords": ["core vs bgc", "difference between core and bgc", "core float", "bgc float", "biogeochemical"],
+    "answer": "Core Argo floats measure core physical variables: pressure, temperature, and salinity (from conductivity) from 0 to 2000 dbar every 10 days. BGC-Argo floats carry the Core CTD plus 6 biogeochemical sensors: chlorophyll-a fluorescence, particle backscatter (BBP), dissolved oxygen (DOXY), nitrate, pH, and downwelling irradiance. BGC data are stored in separate B-files and S-files (synthetic files merging CTD and BGC). Core is the original array; BGC extends it for biogeochemistry.",
+    "category": "types"
+  },
+  {
+    "id": "what_is_core_float",
+    "question": "What is a Core Argo float?",
+    "keywords": ["core argo", "core float", "what is core"],
+    "answer": "A Core Argo float is the standard Argo platform measuring pressure, temperature, and electrical conductivity (converted to salinity). It profiles from ~2000 dbar to surface every 10 days, parks at ~1000 dbar, and transmits via satellite. A typical Core float lasts 4-5 years and performs ~150-180 profiles before battery depletion, after which it sinks.",
+    "category": "types"
+  },
+  {
+    "id": "what_is_bgc_float",
+    "question": "What is a BGC float?",
+    "keywords": ["bgc float", "biogeochemical float", "bgc argo", "what is bgc"],
+    "answer": "A BGC Argo float is a Core float equipped with additional biogeochemical sensors: dissolved oxygen, chlorophyll fluorescence, particle backscatter at 700nm (BBP700), nitrate, pH in situ total, and downwelling irradiance (PAR and UV). According to argodatamgt.org, BGC measurements are in B-profile and synthetic S-profile NetCDF files. FloatChat's data lake includes these variables for Indian Ocean region queries.",
+    "category": "types"
+  },
+  {
+    "id": "parking_depth",
+    "question": "What is parking depth?",
+    "keywords": ["parking depth", "drift depth", "1000m", "park"],
+    "answer": "Parking depth is the depth where a float drifts between profiles to conserve energy and provide velocity estimates at that level. For Core Argo the standard parking depth is 1000 dbar (~1000m), where average current velocities are measured by displacement between surfacing positions. Parking depth can be configured mission-specifically; e.g. shallow seas may use 40-50m. It is distinct from profile depth (usually 2000 dbar max).",
+    "category": "operation"
+  },
+  {
+    "id": "profile_depth",
+    "question": "How deep do Argo floats profile?",
+    "keywords": ["profile depth", "2000m", "how deep", "profiling depth"],
+    "answer": "Standard Core and BGC Argo floats profile from 2000 dbar (~2000m) to the surface. Some Deep Argo floats profile to 4000-6000 dbar for deep ocean monitoring. In FloatChat's India-region data lake, most profiles reach 1000-2000m. Depth is derived from pressure sensor measurements.",
+    "category": "operation"
+  },
+  {
+    "id": "lifespan_battery",
+    "question": "How long do Argo floats last? Battery life?",
+    "keywords": ["lifespan", "battery", "how long", "float life", "battery life", "years"],
+    "answer": "A typical Argo float lasts 4-5 years with lithium batteries, performing ~150-180 10-day cycles. End of life is usually battery exhaustion, after which the float sinks to the seafloor and is not recovered. Battery voltage is monitored and reported in technical files; low voltage leads to shorter surface time or aborted profiles. FloatChat estimates battery percentage from voltage using manufacturer curves.",
+    "category": "hardware"
+  },
+  {
+    "id": "telemetry",
+    "question": "How do Argo floats transmit data? What is telemetry?",
+    "keywords": ["telemetry", "transmission", "argos", "iridium", "satellite", "gps"],
+    "answer": "Argo floats use satellite telemetry to send data. Older floats use Argos (one-way, slow, ~6-12 hours surface time, Doppler positioning). Modern floats use Iridium (two-way, fast, <30 min surface time, GPS positioning, allows remote mission reconfiguration). Data are transferred to Global Data Assembly Centres (GDACs) at IFREMER and US-GODAE. Some also use Orbcomm. Telemetry determines positioning accuracy and ability to change mission parameters during deployment.",
+    "category": "hardware"
+  },
+  {
+    "id": "data_quality",
+    "question": "What is Argo data quality control? Real-time vs Delayed mode?",
+    "keywords": ["data quality", "quality control", "qc", "real time", "delayed mode", "accuracy"],
+    "answer": "Argo data has two quality levels: Real-time (RT) data are automatically quality-controlled within 24 hours of transmission and flagged (QC flags 1-4). Delayed-mode (DM) data are manually inspected by experts after 6-18 months, calibrated against climatology and high-quality reference data, and considered research-quality. Core variables accuracy targets: temperature ±0.002°C, salinity ±0.01 PSU, pressure ±2.4 dbar. BGC sensors have sensor-specific accuracies documented at argodatamgt.org/Documentation.",
+    "category": "data"
+  },
+  {
+    "id": "wmo_id",
+    "question": "What is WMO ID?",
+    "keywords": ["wmo", "wmo id", "float id", "identifier"],
+    "answer": "WMO ID is the unique 7-digit World Meteorological Organization identifier assigned to each Argo float (e.g., 2902403). It is used as the primary key in all Argo NetCDF files and GDAC indexes. In FloatChat you can query by float e.g. 'Sensors on float 2902403' or 'Trajectory of WMO 6903091'. The ID persists for the float's lifetime.",
+    "category": "metadata"
+  },
+  {
+    "id": "gdac",
+    "question": "What is GDAC?",
+    "keywords": ["gdac", "global data assembly centre", "ifremere", "us godae"],
+    "answer": "GDAC stands for Global Data Assembly Centre. There are two GDACs: IFREMER in France (https://data-argo.ifremer.fr) and US-GODAE/FNMOC. They mirror each other and provide the complete Argo dataset in NetCDF files with standardized file naming (e.g., R/D files for profile data) and index files (e.g., argo_bio-profile_index.txt.gz). FloatChat's data lake is built by ingesting GDAC data for the India region.",
+    "category": "data"
+  },
+  {
+    "id": "sensors_bgc",
+    "question": "What sensors are on BGC floats?",
+    "keywords": ["bgc sensors", "sensors", "oxygen", "nitrate", "ph", "chlorophyll", "bbp", "irradiance"],
+    "answer": "BGC-Argo floats can carry up to 6 core BGC sensors: 1) Dissolved oxygen (optode, DOXY), 2) Chlorophyll-a fluorescence (CHLA), 3) Particle backscattering at 700nm (BBP700), 4) Nitrate (NITRATE, via UV spectrophotometer), 5) pH (PH_IN_SITU_TOTAL), 6) Downwelling irradiance (DOWNWELLING_PAR and DOWN_IRRADIANCE at 380, 412, 490nm). Not all floats carry all sensors; sensor presence is in float metadata.",
+    "category": "sensors"
+  },
+  {
+    "id": "profile_cycle",
+    "question": "What is a profile and cycle number?",
+    "keywords": ["profile", "cycle", "cycle number", "profile number"],
+    "answer": "A profile is one ascent from 2000 dbar to surface measuring ocean properties. Cycle number is the sequential count of profiles for a given float, starting from 0 or 1 at deployment. In NetCDF files, N_PROF corresponds to cycle, and N_LEVELS to depth levels within that profile. FloatChat's queries like 'latest profile' or 'profile 50 of float 2902403' refer to cycle numbers.",
+    "category": "general"
+  },
+  {
+    "id": "pressure_measurement",
+    "question": "How is depth measured? What is pressure?",
+    "keywords": ["pressure", "depth", "pressure sensor", "dbar"],
+    "answer": "Depth is derived from pressure measured by a high-accuracy piezoresistive pressure sensor at 1 dbar ~ 1 meter. Argo records PRES in decibars, then computes depth via hydrostatic relation. Core accuracy requirement is ±2.4 dbar. All BGC variables are binned by PRES levels for profile plots.",
+    "category": "sensors"
+  },
+  {
+    "id": "india_incois",
+    "question": "Why is Argo important for India and INCOIS?",
+    "keywords": ["india", "incois", "indian ocean", "arabian sea", "bay of bengal", "why important"],
+    "answer": "India's INCOIS (Indian National Centre for Ocean Information Services) operates India's Argo program and uses Argo data for monsoon forecasting, ocean state forecasting, cyclone heat potential, and fisheries advisories. The Indian Ocean region (Arabian Sea and Bay of Bengal) has unique seasonal reversals and freshwater influx. Argo provides sustained subsurface data for the North Indian Ocean that satellites cannot, critical for operational oceanography. FloatChat is scoped to India region (~40-100E, -10-30N) to serve INCOIS needs with fast local queries.",
+    "category": "india"
+  },
+  {
+    "id": "deployment",
+    "question": "How are Argo floats deployed?",
+    "keywords": ["deployment", "deploy", "launched", "ship", "recovery"],
+    "answer": "Argo floats are deployed from research vessels, commercial ships, or aircraft, usually by lowering by hand. Once in water, they automatically start their mission. Floats are not recovered; they are autonomous and drift freely until battery depletion and then sink. Deployment metadata (date, position, ship, institution) are stored in Argo NetCDF global attributes. Manufacturer examples include Teledyne Webb (Apex), Sea-Bird Scientific (Navis), NKE (Arvor), MRV.",
+    "category": "hardware"
+  },
+  {
+    "id": "global_array",
+    "question": "How many Argo floats are there globally?",
+    "keywords": ["how many floats", "global array", "number of floats", "4000"],
+    "answer": "The global Argo array target is ~4000 active floats providing ~100km average spacing, maintained by >30 nations. As of 2024-2025, over 4000 floats are active, with ~9000 total deployed historically. BGC-Argo aims for 1000 floats, Deep Argo for 1250. Regional Indian Ocean array is subset focused on 40-100E longitude. FloatChat's local data lake currently holds ~220k profiles from India region floats.",
+    "category": "general"
+  },
+  {
+    "id": "variables_accuracy",
+    "question": "What is accuracy of Argo measurements?",
+    "keywords": ["accuracy", "temperature accuracy", "salinity accuracy", "precision"],
+    "answer": "Argo target accuracies from argodatamgt.org: Temperature ±0.002°C, Salinity ±0.01 PSU, Pressure ±2.4 dbar, Oxygen ±2% or ±5 micromol/kg, Nitrate ±0.5 micromol/kg, pH ±0.005, Chlorophyll ±30%, BBP ±20%, Irradiance ±10-15%. Real-time data may have higher uncertainties before delayed-mode calibration. Quality flags (1=good, 2=probably good, 3=probably bad, 4=bad) indicate reliability.",
+    "category": "data"
+  },
+  {
+    "id": "file_types",
+    "question": "What are Argo file types?",
+    "keywords": ["file types", "r files", "d files", "b files", "s files", "netcdf"],
+    "answer": "Argo GDAC uses NetCDF files: Core profile files: R* (real-time) and D* (delayed-mode). BGC: BR*/BD* (BGC parameters only), SR*/SD* (Synthetic merging Core+BGC co-located). Metadata: meta.nc, tech.nc, traj.nc. Index files list all profiles. FloatChat's data lake parses these to extract TEMP, PSAL, DOXY, CHLA, BBP700, NITRATE, PH, PAR etc. for Lake queries.",
+    "category": "data"
+  }
+]
