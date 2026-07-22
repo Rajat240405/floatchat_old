@@ -98,7 +98,8 @@ export function hasActiveFilters(filters: FilterState): boolean {
     filters.variables.length > 0 ||
     filters.statuses.length > 0 ||
     filters.dateFrom !== "" ||
-    filters.dateTo !== ""
+    filters.dateTo !== "" ||
+    !!filters.deepFloats
   );
 }
 

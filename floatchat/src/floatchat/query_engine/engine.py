@@ -951,8 +951,19 @@ class QueryEngine:
                         if lake._phase2_root and (lake._phase2_root / "parquet" / "profile_index").exists()
                         else (lake._lake_root / "**" / "*.parquet").as_posix()
                     )
-                    lat_col = "latitude" if "profile_index" in str(pi_path) else "lat"
-                    lon_col = "longitude" if "profile_index" in str(pi_path) else "lon"
+                    # Support BOTH schemas: lat/lon (Phase2) and latitude/longitude (legacy)
+                    lat_col = "lat" if "lat" in str(pi_path).lower() or True else "latitude"  # prefer lat
+                    lon_col = "lon" if "lon" in str(pi_path).lower() or True else "longitude"
+                    # Determine actual column names present in parquet
+                    try:
+                        sample = conn.execute(f"SELECT * FROM read_parquet('{pi_path}', hive_partitioning=true) LIMIT 1").fetchdf()
+                        cols = [c.lower() for c in sample.columns]
+                        lat_col = "lat" if "lat" in cols else ("latitude" if "latitude" in cols else "lat")
+                        lon_col = "lon" if "lon" in cols else ("longitude" if "longitude" in cols else "lon")
+                    except Exception:
+                        lat_col = "lat"
+                        lon_col = "lon"
+
                     sql = f"SELECT CAST(float_id AS VARCHAR) AS float_id, date, arg_max({lat_col}, date) AS lat, arg_max({lon_col}, date) AS lon, COALESCE(arg_max(dac, date), '') AS dac FROM read_parquet('{pi_path}', hive_partitioning=true) WHERE CAST(float_id AS VARCHAR) = ? GROUP BY float_id, date ORDER BY date ASC"
                     df = conn.execute(sql, [clean_fid]).fetchdf()
                 except Exception as exc:
@@ -1103,7 +1114,7 @@ class QueryEngine:
                     explanation = facts.cross_variable_notes[0]
                 msg = f"{msg}\n\n{explanation}"
             except Exception as exc:
-                logger.warning("Trajectory narration explanation failed: %s", exc)
+                logger.warning("Trajectory narration explanation failed (tolerated, visualization not blocked): %s", exc)
 
         return ChatResponse(
             intent="trajectory",

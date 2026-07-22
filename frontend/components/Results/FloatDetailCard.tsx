@@ -26,19 +26,19 @@ export function FloatDetailCard({ float, onClear, onDrillDown }: FloatDetailCard
       onMouseDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
-      className="rounded-2xl border border-surface-800/80 bg-surface-900 p-5 shadow-xl flex flex-col gap-4 text-surface-100 font-sans select-none pointer-events-auto"
+      className="rounded-2xl border border-slate-300/80 bg-white p-5 shadow-xl flex flex-col gap-4 text-slate-800 font-sans select-none pointer-events-auto"
     >
       {/* Header */}
-      <div className="flex items-center justify-between pb-3 border-b border-surface-800/60">
+      <div className="flex items-center justify-between pb-3 border-b border-slate-200">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-xl bg-ocean-500/15 border border-ocean-500/30 flex items-center justify-center text-ocean-400 shadow-2xs shrink-0">
             <Anchor className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-base font-extrabold text-surface-100 tracking-tight truncate">
+            <h3 className="text-base font-extrabold text-slate-800 tracking-tight truncate">
               Float {float.float_id}
             </h3>
-            <p className="text-xs font-semibold text-surface-400 uppercase">
+            <p className="text-xs font-semibold text-slate-500 uppercase">
               {float.dac || "N/A"} · Selected Profile
             </p>
           </div>
@@ -50,7 +50,7 @@ export function FloatDetailCard({ float, onClear, onDrillDown }: FloatDetailCard
             e.stopPropagation();
             onClear();
           }}
-          className="text-xs font-bold text-surface-400 hover:text-surface-100 transition-colors px-3 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-700 cursor-pointer shrink-0"
+          className="text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-surface-700 cursor-pointer shrink-0"
         >
           ✕ View All
         </button>
@@ -58,20 +58,20 @@ export function FloatDetailCard({ float, onClear, onDrillDown }: FloatDetailCard
 
       {/* Grid Specs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-        <div className="p-3 rounded-xl bg-surface-950/60 border border-surface-800/60">
-          <span className="text-surface-400 font-semibold flex items-center gap-1.5 mb-1 uppercase tracking-wider text-[10px]">
+        <div className="p-3 rounded-xl bg-slate-100 border border-slate-200">
+          <span className="text-slate-500 font-semibold flex items-center gap-1.5 mb-1 uppercase tracking-wider text-[10px]">
             <Hash className="w-3.5 h-3.5 text-ocean-400" /> Float ID
           </span>
-          <span className="font-extrabold text-surface-100 text-sm font-mono">
+          <span className="font-extrabold text-slate-800 text-sm font-mono">
             {float.float_id}
           </span>
         </div>
 
-        <div className="p-3 rounded-xl bg-surface-950/60 border border-surface-800/60">
-          <span className="text-surface-400 font-semibold flex items-center gap-1.5 mb-1 uppercase tracking-wider text-[10px]">
+        <div className="p-3 rounded-xl bg-slate-100 border border-slate-200">
+          <span className="text-slate-500 font-semibold flex items-center gap-1.5 mb-1 uppercase tracking-wider text-[10px]">
             <Calendar className="w-3.5 h-3.5 text-emerald-400" /> Date
           </span>
-          <span className="font-extrabold text-surface-100 text-xs truncate block">
+          <span className="font-extrabold text-slate-800 text-xs truncate block">
             {float.profile_date
               ? new Date(float.profile_date).toLocaleDateString("en-GB", {
                   day: "2-digit",
@@ -82,22 +82,22 @@ export function FloatDetailCard({ float, onClear, onDrillDown }: FloatDetailCard
           </span>
         </div>
 
-        <div className="p-3 rounded-xl bg-surface-950/60 border border-surface-800/60">
-          <span className="text-surface-400 font-semibold flex items-center gap-1.5 mb-1 uppercase tracking-wider text-[10px]">
+        <div className="p-3 rounded-xl bg-slate-100 border border-slate-200">
+          <span className="text-slate-500 font-semibold flex items-center gap-1.5 mb-1 uppercase tracking-wider text-[10px]">
             <MapPin className="w-3.5 h-3.5 text-amber-400" /> Latitude
           </span>
-          <span className="font-extrabold text-surface-100 text-xs truncate block font-mono">
+          <span className="font-extrabold text-slate-800 text-xs truncate block font-mono">
             {typeof float.latitude === "number"
               ? `${Math.abs(float.latitude).toFixed(2)}° ${float.latitude >= 0 ? "N" : "S"}`
               : "N/A"}
           </span>
         </div>
 
-        <div className="p-3 rounded-xl bg-surface-950/60 border border-surface-800/60">
-          <span className="text-surface-400 font-semibold flex items-center gap-1.5 mb-1 uppercase tracking-wider text-[10px]">
+        <div className="p-3 rounded-xl bg-slate-100 border border-slate-200">
+          <span className="text-slate-500 font-semibold flex items-center gap-1.5 mb-1 uppercase tracking-wider text-[10px]">
             <MapPin className="w-3.5 h-3.5 text-violet-400" /> Longitude
           </span>
-          <span className="font-extrabold text-surface-100 text-xs truncate block font-mono">
+          <span className="font-extrabold text-slate-800 text-xs truncate block font-mono">
             {typeof float.longitude === "number"
               ? `${Math.abs(float.longitude).toFixed(2)}° ${float.longitude >= 0 ? "E" : "W"}`
               : "N/A"}
@@ -106,11 +106,11 @@ export function FloatDetailCard({ float, onClear, onDrillDown }: FloatDetailCard
       </div>
 
       {/* Collapsible Sensors */}
-      <div className="py-2 border-t border-surface-800/60">
-        <p className="text-[11px] uppercase tracking-wider text-surface-400 font-bold mb-2">
+      <div className="py-2 border-t border-slate-200">
+        <p className="text-[11px] uppercase tracking-wider text-slate-500 font-bold mb-2">
           Payload Sensors ({sensorsList.length})
         </p>
-        <div className="text-xs font-semibold text-surface-200 bg-surface-950/60 px-3.5 py-2.5 rounded-xl border border-surface-800/60 leading-relaxed text-center break-words max-h-[110px] overflow-y-auto scrollbar-thin">
+        <div className="text-xs font-semibold text-slate-700 bg-slate-100 px-3.5 py-2.5 rounded-xl border border-slate-200 leading-relaxed text-center break-words max-h-[110px] overflow-y-auto scrollbar-thin">
           {(() => {
             if (!hasManySensors || showAllSensors) {
               return sensorsList.join(" • ");
@@ -128,7 +128,7 @@ export function FloatDetailCard({ float, onClear, onDrillDown }: FloatDetailCard
               e.stopPropagation();
               setShowAllSensors(!showAllSensors);
             }}
-            className="w-full mt-2 py-1.5 text-center text-xs font-bold text-ocean-400 hover:text-ocean-300 hover:bg-surface-800/60 rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1 select-none"
+            className="w-full mt-2 py-1.5 text-center text-xs font-bold text-ocean-400 hover:text-ocean-300 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1 select-none"
           >
             {showAllSensors ? "Show fewer sensors ▲" : `Show all sensors (${sensorsList.length}) ▼`}
           </button>
@@ -137,7 +137,7 @@ export function FloatDetailCard({ float, onClear, onDrillDown }: FloatDetailCard
 
       {/* Quick Actions (Minimum 44px Height) */}
       {onDrillDown && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-surface-800/60">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-200">
           <button
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
@@ -148,7 +148,7 @@ export function FloatDetailCard({ float, onClear, onDrillDown }: FloatDetailCard
               onClear();
               onDrillDown(`Sensors on float ${float.float_id}`);
             }}
-            className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-surface-800 hover:bg-surface-700 active:bg-surface-600 text-surface-100 font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-2xs border border-surface-700 cursor-pointer select-none"
+            className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-surface-700 active:bg-surface-600 text-slate-800 font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-2xs border border-slate-300 cursor-pointer select-none"
           >
             🔍 View Metadata
           </button>

@@ -13,7 +13,7 @@ import {
   PlotlyFigure,
   EMPTY_FILTERS,
 } from "@/types";
-import { sendChatMessage, getErrorMessage } from "@/services/api";
+import { sendChatMessage, getErrorMessage, getInitialRegistry } from "@/services/api";
 import { generateId, applyFilters } from "@/lib/utils";
 
 interface UseChatReturn {
@@ -56,6 +56,8 @@ interface UseChatReturn {
     variables: string[];
     statuses: string[];
   };
+  // Reliable count for sidebar "Active Floats" even on initial load
+  floatCount: number;
 
   floatSearch: string;
   setFloatSearch: (s: string) => void;
@@ -85,6 +87,10 @@ export function useChat(): UseChatReturn {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [floatSearch, setFloatSearch] = useState("");
 
+  // NEW: initial live registry for dashboard (populated on app start)
+  const [initialMapData, setInitialMapData] = useState<MapData[]>([]);
+  const [isBootstrapLoading, setIsBootstrapLoading] = useState(true);
+
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container || !messagesEndRef.current) return;
@@ -105,7 +111,7 @@ export function useChat(): UseChatReturn {
     isNearBottomRef.current = scrollTop + clientHeight >= scrollHeight - 100;
   }, []);
 
-  const currentMapData = useMemo(
+  const chatMapData = useMemo(
     () =>
       [...messages]
         .reverse()
@@ -113,19 +119,67 @@ export function useChat(): UseChatReturn {
     [messages]
   );
 
+  // Prefer bootstrap live registry for initial dashboard (filters + map) until chat produces data.
+  // This ensures sidebar and map are populated immediately on startup.
+  const currentMapData = useMemo(
+    () => (initialMapData.length > 0 ? initialMapData : chatMapData),
+    [initialMapData, chatMapData]
+  );
+
+  // ── Load cycle history / trajectory on explicit action (defined early for closure) ───────────────────
+  const loadCycleHistory = useCallback(
+    async (floatId: string) => {
+      if (isLoadingCycles) return;
+      setIsLoadingCycles(true);
+      try {
+        const response = await sendChatMessage(
+          { message: `Show trajectory of float ${floatId}` },
+          sessionIdRef.current
+        );
+        const mapData = response.map_data ?? [];
+        const ordered = (mapData || [])
+          .filter((m: any) => m.float_id === floatId)
+          .sort((a: any, b: any) => (a.profile_number ?? 0) - (b.profile_number ?? 0));
+        const cycles: CyclePoint[] = ordered.map((m: any, idx: number) => ({
+          cycleNumber: m.profile_number ?? idx + 1,
+          date: m.profile_date,
+          latitude: m.latitude,
+          longitude: m.longitude,
+          variables: m.variables ?? [],
+          index: idx,
+          isDeployment: idx === 0,
+          isCurrent: idx === ordered.length - 1,
+        }));
+        setCycleData(cycles.length > 0 ? cycles : null);
+        setHighlightCycle(null);
+      } catch {
+        setCycleData(null);
+      } finally {
+        setIsLoadingCycles(false);
+      }
+    },
+    [isLoadingCycles]
+  );
+
   // ── Workflow: selecting a float swaps the right column to metadata ───────
-  const handleSelectFloat = useCallback((floatId: string | null) => {
+  // Single click: immediately select + show metadata + cycle history (no auto chat)
+  const handleSelectFloat = useCallback(async (floatId: string | null) => {
     setSelectedFloat(floatId);
     if (floatId) {
       setMode("metadata");
       setChatOpenState(false);
-      setCycleData(null);
       setHighlightCycle(null);
+      try {
+        await loadCycleHistory(floatId);
+      } catch {
+        // ignore, CycleHistory will show empty state
+      }
     } else {
       setMode("chat");
       setChatOpenState(false);
+      setCycleData(null);
     }
-  }, []);
+  }, [loadCycleHistory]);
 
   // Toggling the chat overlay must NOT clear conversation or selection.
   const setChatOpen = useCallback((open: boolean) => {
@@ -147,46 +201,74 @@ export function useChat(): UseChatReturn {
     return {
       floatId: selectedFloat,
       cycle: highlightCycle,
-      region: sel?.status ? null : null, // region surfaced from query context below
+      region: sel?.status ? null : null,
       variables: cyclePoint?.variables ?? sel?.variables ?? [],
     };
   }, [selectedFloat, currentMapData, messages, highlightCycle]);
 
-  // Surface the region from the most recent query that carried one.
-  const regionFromQuery = useMemo(() => {
-    const withRegion = [...messages]
-      .reverse()
-      .find((m) => m.role === "assistant" && m.summary?.center);
-    return null; // center coords exist but region label is not on response; keep null until backend exposes it
-  }, [messages]);
-  if (regionFromQuery && context.region === null) {
-    // no-op placeholder; region kept null unless backend exposes it
-  }
+  // ── Filters: derive options from current markers OR initial bootstrap data ─
+  const sourceDataForFilters = useMemo(
+    () => (initialMapData.length > 0 ? initialMapData : currentMapData),
+    [initialMapData, currentMapData]
+  );
 
-  // ── Filters: derive options from current markers ────────────────────────
   const availableFilterOptions = useMemo(() => {
     const nets = new Set<string>();
     const dacs = new Set<string>();
     const vars = new Set<string>();
     const statuses = new Set<string>();
-    for (const m of currentMapData) {
+    for (const m of sourceDataForFilters) {
       nets.add(m.network || "Core Argo");
       if (m.dac) dacs.add(m.dac);
       for (const v of m.variables || []) vars.add(v.toUpperCase());
       if (m.status) statuses.add(m.status);
     }
-    return {
+    // Robust fallbacks so UI is never empty on first load
+    const result = {
       networks: Array.from(nets).sort(),
       dacs: Array.from(dacs).sort(),
       variables: Array.from(vars).sort(),
       statuses: Array.from(statuses).sort(),
     };
-  }, [currentMapData]);
+    if (result.networks.length === 0) result.networks = ["Core Argo", "BGC Argo"];
+    if (result.dacs.length === 0) result.dacs = ["INCOIS", "Coriolis", "AOML"];
+    if (result.variables.length === 0) result.variables = ["TEMP", "PSAL", "DOXY", "CHLA"];
+    if (result.statuses.length === 0) result.statuses = ["active", "inactive"];
+    return result;
+  }, [sourceDataForFilters]);
 
   const filteredMapData = useMemo(() => {
     const { applyFilters } = require("@/lib/utils") as typeof import("@/lib/utils");
     return applyFilters(currentMapData, filters);
   }, [currentMapData, filters]);
+
+  // Reliable count for "Active Floats" — now reflects filters
+  const totalFloatCount = filteredMapData.length;
+
+  // Bootstrap using the new dedicated registry endpoint (no LLM, no chat).
+  const bootstrapInitialRegistry = useCallback(async () => {
+    setIsBootstrapLoading(true);
+    try {
+      const resp: any = await getInitialRegistry();  // now calls /api/v1/floats/registry
+      const data = resp.map_data || resp.data || resp || [];
+      if (Array.isArray(data) && data.length > 0) {
+        setInitialMapData(data);
+      } else if (resp && Array.isArray(resp)) {
+        setInitialMapData(resp);
+      }
+
+      // If the endpoint also returned pre-computed filter options, we can use them
+      // (the current availableFilterOptions memo will also derive from map_data)
+    } catch (e) {
+      console.warn("Initial registry bootstrap failed", e);
+    } finally {
+      setIsBootstrapLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    bootstrapInitialRegistry();
+  }, [bootstrapInitialRegistry]);
 
   // ── Send a chat message ──────────────────────────────────────────────────
   const sendMessage = useCallback(
@@ -276,45 +358,7 @@ export function useChat(): UseChatReturn {
     [input, isLoading]
   );
 
-  // ── Load cycle history / trajectory on explicit action ───────────────────
-  const loadCycleHistory = useCallback(
-    async (floatId: string) => {
-      if (isLoadingCycles) return;
-      setIsLoadingCycles(true);
-      try {
-        const response = await sendChatMessage(
-          { message: `Show trajectory of float ${floatId}` },
-          sessionIdRef.current
-        );
-        const mapData = response.map_data ?? [];
-        // A trajectory response yields multiple points for one float.
-        const ordered = mapData
-          .filter((m) => m.float_id === floatId)
-          .sort((a, b) => (a.profile_number ?? 0) - (b.profile_number ?? 0));
-        const cycles: CyclePoint[] = ordered.map((m, idx) => ({
-          cycleNumber: m.profile_number ?? idx + 1,
-          date: m.profile_date,
-          latitude: m.latitude,
-          longitude: m.longitude,
-          variables: m.variables ?? [],
-          index: idx,
-          isDeployment: idx === 0,
-          isCurrent: idx === ordered.length - 1,
-        }));
-        setCycleData(cycles.length > 0 ? cycles : null);
-        setHighlightCycle(null);
-      } catch {
-        setCycleData(null);
-      } finally {
-        setIsLoadingCycles(false);
-      }
-    },
-    [isLoadingCycles]
-  );
-
-  // Auto-load cycles whenever a float becomes selected AND a trajectory was
-  // already requested for it in the conversation. The explicit "View Trajectory"
-  // action triggers loadCycleHistory directly.
+  // Auto-load cycles (kept for legacy trajectory responses)
   useEffect(() => {
     if (!selectedFloat) {
       setCycleData(null);
@@ -409,6 +453,7 @@ export function useChat(): UseChatReturn {
     setFilters,
     filteredMapData,
     availableFilterOptions,
+    floatCount: totalFloatCount,
     floatSearch,
     setFloatSearch,
     submitFloatSearch,

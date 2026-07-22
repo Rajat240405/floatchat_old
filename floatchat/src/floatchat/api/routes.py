@@ -16,6 +16,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from pathlib import Path
 
 from floatchat.api.dependencies import (
     get_conversation_manager,
@@ -41,6 +42,17 @@ from floatchat.llm_service.classifier import QueryClassifier
 from floatchat.llm_service.knowledge_base import KnowledgeBase
 from floatchat.models import ChatResponse, ParsedIntent
 from floatchat.query_engine.engine import QueryEngine
+
+# Dedicated lightweight registry response for dashboard bootstrap (no chat/LLM)
+from pydantic import BaseModel
+
+class FloatRegistryResponse(BaseModel):
+    float_count: int
+    map_data: list[dict]
+    networks: list[str]
+    dacs: list[str]
+    variables: list[str]
+    statuses: list[str]
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1016,3 +1028,134 @@ def _log_response(response: ChatResponse, request_t0: float) -> None:
         len(response.map_data),
         response.figure is not None,
     )
+
+
+# ================================================
+# NEW: Dedicated lightweight registry endpoint
+# Replaces the previous "floats in arabian sea" bootstrap workaround.
+# Returns data directly from Phase 2 float_registry + profile_index.
+# No LLM, no intent parser, no session, no /chat routing.
+# ================================================
+@router.get("/floats/registry", response_model=FloatRegistryResponse)
+def get_float_registry_endpoint():
+    """Lightweight dashboard bootstrap endpoint.
+
+    Returns:
+    - float_count
+    - map_data (latest position per float)
+    - available filter values (networks, dacs, variables, statuses)
+
+    Uses DuckDBDataLake directly. Safe for immediate startup use.
+    """
+    try:
+        from floatchat.data_lake.duckdb_lake import DuckDBDataLake
+        from floatchat.config import settings
+        import pandas as pd
+
+        lake = DuckDBDataLake(
+            phase2_root=Path(settings.data_lake_dir) if settings.data_lake_phase2_enabled else None,
+            use_phase2=settings.data_lake_phase2_enabled,
+        )
+
+        map_data: list[dict] = []
+        networks: set[str] = set()
+        dacs: set[str] = set()
+        variables: set[str] = set()
+        statuses: set[str] = set()
+
+        # Prefer float_registry for metadata + status/network
+        fr_df = lake.get_float_registry() if hasattr(lake, "get_float_registry") else pd.DataFrame()
+
+        # Get latest position + float list from profile_index (or levels)
+        pi_df = pd.DataFrame()
+        if hasattr(lake, "get_profile_index"):
+            try:
+                pi_df = lake.get_profile_index(limit=10000)
+            except Exception:
+                pi_df = pd.DataFrame()
+
+        if not pi_df.empty:
+            # Latest position per float
+            latest = pi_df.sort_values("date").groupby("float_id").tail(1)
+
+            for _, row in latest.iterrows():
+                fid = str(row.get("float_id", ""))
+                lat = float(row.get("lat", row.get("latitude", 0) or 0))
+                lon = float(row.get("lon", row.get("longitude", 0) or 0))
+
+                map_data.append({
+                    "float_id": fid,
+                    "latitude": lat,
+                    "longitude": lon,
+                    "profile_date": str(row.get("date", ""))[:10] if pd.notna(row.get("date")) else None,
+                    "dac": str(row.get("dac", row.get("institution", "")) or ""),
+                    "variables": [],
+                    "selected": False,
+                    "status": "unknown",
+                    "network": "Core Argo",
+                })
+
+        # Enrich from float_registry
+        if not fr_df.empty and len(map_data) > 0:
+            fr_map = {}
+            for _, r in fr_df.iterrows():
+                fid = str(r.get("float_id", ""))
+                fr_map[fid] = {
+                    "status": str(r.get("status", "unknown")),
+                    "sensors": r.get("sensors", []) if isinstance(r.get("sensors"), list) else str(r.get("sensors", "")).split(","),
+                    "institution": str(r.get("institution", "")),
+                }
+
+            for m in map_data:
+                fid = m["float_id"]
+                if fid in fr_map:
+                    fr = fr_map[fid]
+                    m["status"] = fr["status"]
+                    sensors = fr["sensors"] or []
+                    m["variables"] = [s.strip().upper() for s in sensors if s.strip()]
+                    # Derive network
+                    sensor_blob = " ".join(s.upper() for s in m["variables"])
+                    m["network"] = "BGC Argo" if any(k in sensor_blob for k in ["DOXY", "CHLA", "NITRATE", "BBP", "PH", "PAR"]) else "Core Argo"
+                    if fr["institution"]:
+                        m["dac"] = fr["institution"]
+
+        # Build unique filter values
+        for m in map_data:
+            if m.get("network"):
+                networks.add(m["network"])
+            if m.get("dac"):
+                dacs.add(m["dac"])
+            for v in m.get("variables", []):
+                variables.add(v.upper())
+            if m.get("status"):
+                statuses.add(m["status"])
+
+        # Sensible fallbacks
+        if not networks:
+            networks = {"Core Argo", "BGC Argo"}
+        if not dacs:
+            dacs = {"INCOIS", "Coriolis", "AOML"}
+        if not variables:
+            variables = {"TEMP", "PSAL", "DOXY", "CHLA"}
+        if not statuses:
+            statuses = {"active", "inactive"}
+
+        return FloatRegistryResponse(
+            float_count=len(map_data),
+            map_data=map_data,
+            networks=sorted(list(networks)),
+            dacs=sorted(list(dacs)),
+            variables=sorted(list(variables)),
+            statuses=sorted(list(statuses)),
+        )
+    except Exception as exc:
+        logger.exception("Registry endpoint failed: %s", exc)
+        # Return empty but valid response so frontend never crashes
+        return FloatRegistryResponse(
+            float_count=0,
+            map_data=[],
+            networks=["Core Argo", "BGC Argo"],
+            dacs=["INCOIS", "Coriolis", "AOML"],
+            variables=["TEMP", "PSAL", "DOXY", "CHLA"],
+            statuses=["active", "inactive"],
+        )

@@ -12,6 +12,7 @@ import {
   ChevronDown,
   X,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import { FilterState, EMPTY_FILTERS } from "@/types";
 import { cn, hasActiveFilters } from "@/lib/utils";
@@ -26,6 +27,9 @@ interface SidebarFiltersProps {
     statuses: string[];
   };
   floatCount: number;
+  floatSearch: string;
+  onFloatSearchChange: (value: string) => void;
+  onFloatSearchSubmit: () => void;
   onRefresh: () => void;
   isLoading: boolean;
 }
@@ -35,6 +39,9 @@ export function SidebarFilters({
   onFiltersChange,
   availableOptions,
   floatCount,
+  floatSearch,
+  onFloatSearchChange,
+  onFloatSearchSubmit,
   onRefresh,
   isLoading,
 }: SidebarFiltersProps) {
@@ -63,12 +70,12 @@ export function SidebarFilters({
   };
 
   return (
-    <div className="flex flex-col h-full bg-surface-900/80 border-r border-surface-800/60 overflow-hidden">
+    <div className="flex flex-col h-full bg-white border-r border-slate-200 overflow-hidden shadow-sm">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-surface-800/60 bg-surface-900/90">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-white">
         <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-ocean-400" />
-          <span className="text-sm font-semibold text-surface-200">
+          <Filter className="w-4 h-4 text-ocean-500" />
+          <span className="text-sm font-semibold text-slate-700">
             Scientific Filters
           </span>
         </div>
@@ -76,7 +83,7 @@ export function SidebarFilters({
           {activeFilters && (
             <button
               onClick={clearFilters}
-              className="text-xs px-2 py-1 rounded-md bg-ocean-500/10 text-ocean-400 hover:bg-ocean-500/20 border border-ocean-500/20 transition-colors cursor-pointer"
+              className="text-xs px-2 py-1 rounded-md bg-ocean-50 text-ocean-600 hover:bg-ocean-100 border border-ocean-200 transition-colors cursor-pointer"
             >
               Clear
             </button>
@@ -85,7 +92,7 @@ export function SidebarFilters({
             onClick={onRefresh}
             disabled={isLoading}
             className={cn(
-              "p-1.5 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-800/60 transition-colors cursor-pointer",
+              "p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer",
               isLoading && "animate-spin"
             )}
             title="Refresh data"
@@ -96,16 +103,34 @@ export function SidebarFilters({
       </div>
 
       {/* Float Count */}
-      <div className="px-4 py-2.5 border-b border-surface-800/40 bg-surface-900/50">
+      <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50">
         <div className="flex items-center justify-between">
-          <span className="text-xs text-surface-500 font-medium">Active Floats</span>
-          <span className="text-sm font-bold text-ocean-400">{floatCount}</span>
+          <span className="text-xs text-slate-500 font-medium">Active Floats</span>
+          <span className="text-sm font-bold text-ocean-600">{floatCount}</span>
+        </div>
+      </div>
+
+      {/* Float ID Search (moved from Header) */}
+      <div className="px-4 py-2.5 border-b border-slate-200 bg-slate-50">
+        <div className="text-[10px] uppercase tracking-wider text-slate-400 font-medium mb-1.5">Float ID Search</div>
+        <div className={`flex items-center gap-0 rounded-lg border text-sm transition-all border-slate-300 bg-white overflow-hidden focus-within:border-ocean-400 focus-within:ring-1 focus-within:ring-ocean-400/20`}>
+          <Search className="w-3.5 h-3.5 text-slate-400 ml-2.5 flex-shrink-0" />
+          <input
+            type="text"
+            value={floatSearch}
+            onChange={(e) => onFloatSearchChange(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") onFloatSearchSubmit(); }}
+            placeholder="e.g. 5906471"
+            className="flex-1 min-w-0 px-2 py-1.5 bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
+          />
+          {floatSearch && <button onClick={() => onFloatSearchChange("")} className="p-1 flex-shrink-0 text-slate-400 hover:text-slate-600"><X className="w-3 h-3" /></button>}
+          <button onClick={onFloatSearchSubmit} disabled={!floatSearch.trim() || isLoading} className="flex-shrink-0 px-2.5 py-1.5 bg-ocean-500 hover:bg-ocean-400 disabled:opacity-50 text-[10px] font-semibold text-white whitespace-nowrap">Go</button>
         </div>
       </div>
 
       {/* Scrollable Filter Sections */}
       <div className="flex-1 overflow-y-auto scrollbar-thin">
-        {/* Network Filter */}
+        {/* Network Filter - Checkbox multi-select */}
         <FilterSection
           title="Network"
           icon={<Layers className="w-3.5 h-3.5" />}
@@ -113,19 +138,22 @@ export function SidebarFilters({
         >
           {availableOptions.networks.length > 0 ? (
             availableOptions.networks.map((net) => (
-              <FilterChip
-                key={net}
-                label={net}
-                active={filters.networks.includes(net)}
-                onClick={() => toggleArrayFilter("networks", net)}
-              />
+              <label key={net} className="flex items-center gap-2 text-xs cursor-pointer py-0.5">
+                <input
+                  type="checkbox"
+                  checked={filters.networks.includes(net)}
+                  onChange={() => toggleArrayFilter("networks", net)}
+                  className="w-3.5 h-3.5 accent-ocean-500"
+                />
+                <span className="text-slate-700">{net}</span>
+              </label>
             ))
           ) : (
-            <span className="text-xs text-surface-600">No networks available</span>
+            <span className="text-xs text-slate-400">No networks available</span>
           )}
         </FilterSection>
 
-        {/* DAC Filter */}
+        {/* DAC Filter - Checkbox multi-select */}
         <FilterSection
           title="Data Assembly Centre"
           icon={<MapPin className="w-3.5 h-3.5" />}
@@ -133,19 +161,22 @@ export function SidebarFilters({
         >
           {availableOptions.dacs.length > 0 ? (
             availableOptions.dacs.map((dac) => (
-              <FilterChip
-                key={dac}
-                label={dac}
-                active={filters.dacs.includes(dac)}
-                onClick={() => toggleArrayFilter("dacs", dac)}
-              />
+              <label key={dac} className="flex items-center gap-2 text-xs cursor-pointer py-0.5">
+                <input
+                  type="checkbox"
+                  checked={filters.dacs.includes(dac)}
+                  onChange={() => toggleArrayFilter("dacs", dac)}
+                  className="w-3.5 h-3.5 accent-ocean-500"
+                />
+                <span className="text-slate-700">{dac}</span>
+              </label>
             ))
           ) : (
-            <span className="text-xs text-surface-600">No DACs available</span>
+            <span className="text-xs text-slate-400">No DACs available</span>
           )}
         </FilterSection>
 
-        {/* Status Filter */}
+        {/* Status Filter - Checkbox multi-select */}
         <FilterSection
           title="Status"
           icon={<Activity className="w-3.5 h-3.5" />}
@@ -153,45 +184,43 @@ export function SidebarFilters({
         >
           {availableOptions.statuses.length > 0 ? (
             availableOptions.statuses.map((status) => (
-              <FilterChip
-                key={status}
-                label={status}
-                active={filters.statuses.includes(status)}
-                onClick={() => toggleArrayFilter("statuses", status)}
-                color={
-                  status === "active"
-                    ? "emerald"
-                    : status === "drifted"
-                      ? "amber"
-                      : "slate"
-                }
-              />
+              <label key={status} className="flex items-center gap-2 text-xs cursor-pointer py-0.5">
+                <input
+                  type="checkbox"
+                  checked={filters.statuses.includes(status)}
+                  onChange={() => toggleArrayFilter("statuses", status)}
+                  className="w-3.5 h-3.5 accent-ocean-500"
+                />
+                <span className="text-slate-700 capitalize">{status}</span>
+              </label>
             ))
           ) : (
-            <span className="text-xs text-surface-600">No statuses available</span>
+            <span className="text-xs text-slate-400">No statuses available</span>
           )}
         </FilterSection>
 
-        {/* Variables Filter */}
+        {/* Variables Filter - Checkbox multi-select */}
         <FilterSection
           title="Variables"
           icon={<Crosshair className="w-3.5 h-3.5" />}
           activeCount={filters.variables.length}
         >
           {availableOptions.variables.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs">
               {availableOptions.variables.map((v) => (
-                <FilterChip
-                  key={v}
-                  label={v}
-                  active={filters.variables.includes(v)}
-                  onClick={() => toggleArrayFilter("variables", v)}
-                  small
-                />
+                <label key={v} className="flex items-center gap-2 cursor-pointer py-0.5">
+                  <input
+                    type="checkbox"
+                    checked={filters.variables.includes(v)}
+                    onChange={() => toggleArrayFilter("variables", v)}
+                    className="w-3.5 h-3.5 accent-ocean-500"
+                  />
+                  <span className="text-slate-700">{v}</span>
+                </label>
               ))}
             </div>
           ) : (
-            <span className="text-xs text-surface-600">No variables available</span>
+            <span className="text-xs text-slate-400">No variables available</span>
           )}
         </FilterSection>
 
@@ -205,24 +234,37 @@ export function SidebarFilters({
         >
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
-              <label className="text-xs text-surface-500 w-8">From</label>
+              <label className="text-xs text-slate-500 w-8">From</label>
               <input
                 type="date"
                 value={filters.dateFrom}
                 onChange={(e) => updateFilter("dateFrom", e.target.value)}
-                className="flex-1 px-2 py-1.5 text-xs rounded-lg bg-surface-800 border border-surface-700/60 text-surface-200 focus:outline-none focus:border-ocean-500/50 focus:ring-1 focus:ring-ocean-500/20"
+                className="flex-1 px-2 py-1.5 text-xs rounded-lg bg-white border border-slate-300 text-slate-700 focus:outline-none focus:border-ocean-400 focus:ring-1 focus:ring-ocean-400/20"
               />
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-xs text-surface-500 w-8">To</label>
+              <label className="text-xs text-slate-500 w-8">To</label>
               <input
                 type="date"
                 value={filters.dateTo}
                 onChange={(e) => updateFilter("dateTo", e.target.value)}
-                className="flex-1 px-2 py-1.5 text-xs rounded-lg bg-surface-800 border border-surface-700/60 text-surface-200 focus:outline-none focus:border-ocean-500/50 focus:ring-1 focus:ring-ocean-500/20"
+                className="flex-1 px-2 py-1.5 text-xs rounded-lg bg-white border border-slate-300 text-slate-700 focus:outline-none focus:border-ocean-400 focus:ring-1 focus:ring-ocean-400/20"
               />
             </div>
           </div>
+        </FilterSection>
+
+        {/* Deep Floats (>2000 m) - additive filter */}
+        <FilterSection title="Depth" activeCount={filters.deepFloats ? 1 : 0}>
+          <label className="flex items-center gap-2 px-1 py-1.5 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={filters.deepFloats}
+              onChange={(e) => onFiltersChange({ ...filters, deepFloats: e.target.checked })}
+              className="w-3.5 h-3.5 accent-ocean-500"
+            />
+            <span className="text-slate-700">Deep Floats (&gt;2000 m)</span>
+          </label>
         </FilterSection>
 
         {/* Region Quick Filters */}
@@ -233,8 +275,8 @@ export function SidebarFilters({
               className={cn(
                 "w-full text-left px-3 py-2 text-xs rounded-lg border transition-all",
                 filters.region === "arabian_sea"
-                  ? "bg-ocean-500/15 border-ocean-500/40 text-ocean-300"
-                  : "bg-surface-800/40 border-surface-700/30 text-surface-400 hover:bg-surface-800/60 hover:border-surface-600/40"
+                  ? "bg-ocean-50 border-ocean-300 text-ocean-700 font-medium"
+                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300"
               )}
             >
               Arabian Sea
@@ -244,8 +286,8 @@ export function SidebarFilters({
               className={cn(
                 "w-full text-left px-3 py-2 text-xs rounded-lg border transition-all",
                 filters.region === "bay_of_bengal"
-                  ? "bg-ocean-500/15 border-ocean-500/40 text-ocean-300"
-                  : "bg-surface-800/40 border-surface-700/30 text-surface-400 hover:bg-surface-800/60 hover:border-surface-600/40"
+                  ? "bg-ocean-50 border-ocean-300 text-ocean-700 font-medium"
+                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300"
               )}
             >
               Bay of Bengal
@@ -255,8 +297,8 @@ export function SidebarFilters({
               className={cn(
                 "w-full text-left px-3 py-2 text-xs rounded-lg border transition-all",
                 filters.region === ""
-                  ? "bg-surface-700/60 border-surface-600/50 text-surface-200"
-                  : "bg-surface-800/40 border-surface-700/30 text-surface-500 hover:bg-surface-800/60 hover:border-surface-600/40"
+                  ? "bg-slate-100 border-slate-300 text-slate-800 font-medium"
+                  : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:border-slate-300"
               )}
             >
               All Regions
@@ -285,23 +327,23 @@ function FilterSection({
   const [isOpen, setIsOpen] = useState(true);
 
   return (
-    <div className="border-b border-surface-800/40">
+    <div className="border-b border-slate-200">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-surface-800/30 transition-colors cursor-pointer"
+        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors cursor-pointer"
       >
         <div className="flex items-center gap-2">
-          {icon && <span className="text-ocean-400">{icon}</span>}
-          <span className="text-xs font-semibold text-surface-300">{title}</span>
+          {icon && <span className="text-ocean-500">{icon}</span>}
+          <span className="text-xs font-semibold text-slate-600">{title}</span>
           {activeCount > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ocean-500/20 text-ocean-400 font-bold">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ocean-100 text-ocean-600 font-bold">
               {activeCount}
             </span>
           )}
         </div>
         <ChevronDown
           className={cn(
-            "w-3.5 h-3.5 text-surface-500 transition-transform",
+            "w-3.5 h-3.5 text-slate-400 transition-transform",
             isOpen && "rotate-180"
           )}
         />

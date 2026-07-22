@@ -88,7 +88,7 @@ export function PlotlyChart({
 
   if (!figure) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 py-16 text-surface-600">
+      <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
         <BarChart3 className="w-8 h-8" />
         <p className="text-sm">No visualization available for this query.</p>
       </div>
@@ -106,7 +106,7 @@ export function PlotlyChart({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <BarChart3 className="w-4 h-4 text-ocean-400" />
-          <span className="text-sm font-medium text-surface-300">
+          <span className="text-sm font-medium text-slate-700">
             Visualization
           </span>
         </div>
@@ -131,7 +131,7 @@ export function PlotlyChart({
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-800 border border-surface-700 text-xs font-medium text-surface-500"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-300 text-xs font-medium text-slate-500"
             >
               <Layers className="w-3 h-3" />
               All Profiles
@@ -142,7 +142,7 @@ export function PlotlyChart({
 
       <div
         ref={containerRef}
-        className="w-full rounded-lg border border-surface-800/60 bg-surface-900/30"
+        className="w-full rounded-lg border border-slate-200 bg-white/30"
         style={{ minHeight: 480 }}
       />
     </motion.div>

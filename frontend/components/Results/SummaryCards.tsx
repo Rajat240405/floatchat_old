@@ -80,10 +80,10 @@ export function SummaryCards({ summary, intent }: SummaryCardsProps) {
         >
           <card.icon className={`w-4 h-4 ${card.color}`} />
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold">
+            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
               {card.label}
             </p>
-            <p className={`text-sm font-semibold text-surface-100 truncate ${card.isText ? "text-xs" : ""}`}>
+            <p className={`text-sm font-semibold text-slate-800 truncate ${card.isText ? "text-xs" : ""}`}>
               {typeof card.value === "number" ? card.value.toLocaleString() : card.value}
             </p>
           </div>

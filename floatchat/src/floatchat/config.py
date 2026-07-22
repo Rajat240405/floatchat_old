@@ -49,15 +49,15 @@ class Settings(BaseSettings):
     netcdf_cache_ttl_days: int = 7
 
     # LLM / Ollama
-    llm_enabled: bool = False
+    llm_enabled: bool = True
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen2.5:7b"
+    ollama_model: str = "qwen2.5:3b"
     ollama_timeout: float = 60.0
     ollama_classifier_timeout: float = 10.0
 
     # Scientific Narrator – LLM-driven explanation (Phase 26+)
-    sci_narrator_enabled: bool = False
-    sci_narrator_model: str = "qwen2.5:7b"
+    sci_narrator_enabled: bool = True
+    sci_narrator_model: str = "qwen2.5:3b"
     sci_narrator_temperature: float = 0.25
     sci_narrator_top_p: float = 0.9
     sci_narrator_timeout: float = 60.0

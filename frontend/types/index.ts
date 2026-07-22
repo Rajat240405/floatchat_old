@@ -119,6 +119,16 @@ export interface HealthResponse {
   metadata_loaded: boolean;
 }
 
+// Backend ChatResponse shape (additive type for frontend)
+export interface ChatResponse {
+  intent: string;
+  message: string;
+  figure?: PlotlyFigure | null;
+  figures?: PlotlyFigure[] | null;
+  data_summary?: DataSummary;
+  map_data?: MapData[];
+}
+
 // ── Redesign: new domain types ────────────────────────────────────────────
 
 /** A single cycle/profile row in the Float Cycle History table. */
@@ -132,6 +142,10 @@ export interface CyclePoint {
   index: number;
   isDeployment: boolean;
   isCurrent: boolean;
+  // Additive fields for Stitch Cycle History table (populated when available from backend)
+  maxDepth?: number | null;
+  temp?: number | null;
+  salinity?: number | null;
 }
 
 /** The current scientific context surfaced in the AI copilot panel. */
@@ -160,6 +174,7 @@ export interface FilterState {
   statuses: string[];        // ["active"] etc.
   dateFrom: string;          // ISO date or ""
   dateTo: string;            // ISO date or ""
+  deepFloats: boolean;       // >2000 m max depth filter (additive)
 }
 
 export const EMPTY_FILTERS: FilterState = {
@@ -170,6 +185,7 @@ export const EMPTY_FILTERS: FilterState = {
   statuses: [],
   dateFrom: "",
   dateTo: "",
+  deepFloats: false,
 };
 
 /** Workspace display mode for the right column. */

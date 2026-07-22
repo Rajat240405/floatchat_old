@@ -10,6 +10,7 @@ import { Header } from "@/components/Layout/Header";
 import { SidebarFilters } from "@/components/Layout/Sidebar";
 import { ChatPanel } from "@/components/Chat/ChatPanel";
 import { PromptInput } from "@/components/Input/PromptInput";
+
 import { MetadataInspector } from "@/components/Results/MetadataInspector";
 import { CycleHistory } from "@/components/Map/CycleHistory";
 import { PlotDrawer } from "@/components/Results/PlotDrawer";
@@ -52,6 +53,7 @@ export default function HomePage() {
     setFilters,
     filteredMapData,
     availableFilterOptions,
+    floatCount,
     floatSearch,
     setFloatSearch,
     submitFloatSearch,
@@ -60,6 +62,8 @@ export default function HomePage() {
 
   // Local state for metadata loading
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
+  // Cycle table expand state
+  const [cycleTableExpanded, setCycleTableExpanded] = useState(false);
 
   // Get the most recent assistant message
   const lastAssistantMessage = useMemo(() => {
@@ -68,8 +72,37 @@ export default function HomePage() {
 
   // Get float info from the most recent response
   const floatInfo: FloatRegistryInfo | null = useMemo(() => {
-    return lastAssistantMessage?.summary?.float_info ?? null;
-  }, [lastAssistantMessage]);
+    const fromMsg = lastAssistantMessage?.summary?.float_info ?? null;
+    if (fromMsg) return fromMsg;
+
+    // Fallback: derive immediately from currentMapData on first select (no second click)
+    if (selectedFloat && currentMapData.length > 0) {
+      const match = currentMapData.find((m: any) => m.float_id === selectedFloat);
+      if (match) {
+        return {
+          float_id: match.float_id,
+          wmo_id: match.wmo_id || match.float_id,
+          dac: match.dac || "",
+          network: match.network || "Core Argo",
+          institution: match.dac || "",
+          platform_type: "",
+          profiler_type: "",
+          manufacturer: "",
+          first_profile_date: match.profile_date || null,
+          last_report_date: match.profile_date || null,
+          profile_count: 0,
+          status: match.status || "active",
+          sensors: match.variables || [],
+          battery_status: "",
+          battery_percentage: null,
+          battery_voltage: null,
+          last_lat: match.latitude,
+          last_lon: match.longitude,
+        } as any;
+      }
+    }
+    return null;
+  }, [lastAssistantMessage, selectedFloat, currentMapData]);
 
   // Radius center for map
   const radiusCenter = useMemo(
@@ -92,9 +125,11 @@ export default function HomePage() {
 
   const handleViewLatestProfile = useCallback(() => {
     if (selectedFloat) {
+      // Explicit reliable trigger: force chat context + latest profile
+      setChatOpen(false); // ensure metadata is visible or will be restored
       sendMessage(`Show latest profile for float ${selectedFloat}`);
     }
-  }, [selectedFloat, sendMessage]);
+  }, [selectedFloat, sendMessage, setChatOpen]);
 
   const handleDownloadMetadata = useCallback(() => {
     if (floatInfo) {
@@ -147,15 +182,8 @@ export default function HomePage() {
     setChatOpen(false);
   }, [setChatOpen]);
 
-  // Load float metadata when float is selected
-  useEffect(() => {
-    if (selectedFloat && !floatInfo) {
-      setIsLoadingMetadata(true);
-      // Query metadata for the selected float
-      sendMessage(`Sensors on float ${selectedFloat}`)
-        .finally(() => setIsLoadingMetadata(false));
-    }
-  }, [selectedFloat, floatInfo, sendMessage]);
+  // Metadata + Cycle History now open on FIRST click via handleSelectFloat + floatInfo fallback.
+  // Removed auto-sendMessage useEffect to prevent second-click requirement and race conditions.
 
   // Workspace content - Chat or Metadata
   const workspaceContent = useMemo(() => {
@@ -200,7 +228,10 @@ export default function HomePage() {
       filters={filters}
       onFiltersChange={setFilters}
       availableOptions={availableFilterOptions}
-      floatCount={filteredMapData.length}
+      floatCount={floatCount}
+      floatSearch={floatSearch}
+      onFloatSearchChange={setFloatSearch}
+      onFloatSearchSubmit={submitFloatSearch}
       onRefresh={() => sendMessage()}
       isLoading={isLoading}
     />
@@ -210,6 +241,7 @@ export default function HomePage() {
   return (
     <>
       <MainLayout
+        cycleExpanded={cycleTableExpanded}
         header={
           <Header
             floatSearch={floatSearch}
@@ -238,6 +270,8 @@ export default function HomePage() {
               highlightedCycle={highlightCycle}
               onSelectCycle={handleSelectCycle}
               floatId={selectedFloat}
+              onExpandToggle={() => setCycleTableExpanded((v) => !v)}
+              isExpanded={cycleTableExpanded}
             />
           ) : undefined
         }
@@ -288,19 +322,19 @@ export default function HomePage() {
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: "100%", opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed top-0 right-0 bottom-0 w-[400px] max-w-[90vw] z-[850] bg-surface-900/98 backdrop-blur-xl border-l border-surface-700/50 shadow-[-20px_0_60px_-10px_rgba(0,0,0,0.5)] flex flex-col"
+              className="fixed top-0 right-0 bottom-0 w-[400px] max-w-[90vw] z-[850] bg-white/98 backdrop-blur-xl border-l border-slate-200 shadow-[-20px_0_60px_-10px_rgba(0,0,0,0.15)] flex flex-col"
             >
               {/* Chat Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-surface-800/60 bg-surface-900/90">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
                 <div className="flex items-center gap-2">
                   <MessageSquare className="w-4 h-4 text-ocean-400" />
-                  <span className="text-sm font-semibold text-surface-200">
+                  <span className="text-sm font-semibold text-slate-700">
                     AI Assistant
                   </span>
                 </div>
                 <button
                   onClick={handleCloseChat}
-                  className="p-1.5 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-800/60 transition-colors cursor-pointer"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>

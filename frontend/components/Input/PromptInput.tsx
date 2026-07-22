@@ -25,7 +25,7 @@ export function PromptInput({
       transition={{ duration: 0.4, delay: 0.2 }}
       className="relative"
     >
-      <div className="flex items-end gap-3 p-3 bg-surface-900 border border-surface-800/60 rounded-xl shadow-lg shadow-black/20">
+      <div className="flex items-end gap-3 p-3 bg-white border border-slate-200 rounded-xl shadow-md shadow-slate-200/60">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -33,7 +33,7 @@ export function PromptInput({
           placeholder="Ask anything about Argo ocean data..."
           rows={1}
           disabled={isLoading}
-          className="flex-1 resize-none bg-transparent text-sm text-surface-100 placeholder:text-surface-600 focus:outline-none min-h-[40px] max-h-[120px] py-2.5 px-1 scrollbar-thin"
+          className="flex-1 resize-none bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none min-h-[40px] max-h-[120px] py-2.5 px-1 scrollbar-thin"
           style={{ fieldSizing: "content" }}
         />
 
@@ -42,7 +42,7 @@ export function PromptInput({
           whileTap={{ scale: 0.95 }}
           onClick={onSend}
           disabled={isLoading || !input.trim()}
-          className="flex items-center justify-center w-10 h-10 rounded-lg bg-ocean-500 hover:bg-ocean-400 disabled:bg-surface-700 disabled:text-surface-500 text-white transition-colors flex-shrink-0"
+          className="flex items-center justify-center w-10 h-10 rounded-lg bg-ocean-500 hover:bg-ocean-400 disabled:bg-slate-200 disabled:text-slate-400 text-white transition-colors flex-shrink-0"
         >
           {isLoading ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -53,7 +53,7 @@ export function PromptInput({
       </div>
 
       {/* Hint */}
-      <p className="mt-2 text-center text-[11px] text-surface-700">
+      <p className="mt-1.5 text-center text-[11px] text-slate-400">
         Press Enter to send · Shift+Enter for new line
       </p>
     </motion.div>

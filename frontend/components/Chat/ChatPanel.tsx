@@ -20,12 +20,12 @@ export function ChatPanel({
   onSelectSuggestion,
 }: ChatPanelProps) {
   return (
-    <div className="flex flex-col h-full bg-surface-900/50 border border-surface-800/60 rounded-xl overflow-hidden">
+    <div className="flex flex-col h-full bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
       {/* Panel Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-surface-800/60 bg-surface-900/80 flex-shrink-0">
-        <MessageSquare className="w-4 h-4 text-ocean-400" />
-        <span className="text-sm font-medium text-surface-300">Conversation</span>
-        <span className="ml-auto text-xs text-surface-600">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 bg-slate-50 flex-shrink-0">
+        <MessageSquare className="w-4 h-4 text-ocean-500" />
+        <span className="text-sm font-medium text-slate-700">Conversation</span>
+        <span className="ml-auto text-xs text-slate-400">
           {messages.filter((m) => m.role === "user").length} queries
         </span>
       </div>

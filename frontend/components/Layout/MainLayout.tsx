@@ -8,7 +8,8 @@ interface MainLayoutProps {
   map: ReactNode;
   workspace: ReactNode;
   cycleHistory?: ReactNode;
-  promptInput: ReactNode;
+  promptInput?: ReactNode;
+  cycleExpanded?: boolean;
 }
 
 export function MainLayout({
@@ -18,9 +19,12 @@ export function MainLayout({
   workspace,
   cycleHistory,
   promptInput,
+  cycleExpanded = false,
 }: MainLayoutProps) {
+  const cycleHeight = cycleExpanded ? "480px" : "240px";
+
   return (
-    <div className="flex flex-col h-screen bg-surface-950 text-surface-100 overflow-hidden">
+    <div className="flex flex-col h-screen bg-slate-100 text-slate-800 overflow-hidden">
       {/* Header */}
       {header}
 
@@ -42,22 +46,28 @@ export function MainLayout({
 
           {/* Bottom - Cycle History (spans width of map) */}
           {cycleHistory && (
-            <div className="h-[240px] min-h-[240px] rounded-2xl overflow-hidden bg-surface-900/50 border border-surface-800/60">
+            <div
+              className="rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-sm flex-shrink-0 transition-all duration-300 ease-in-out"
+              style={{ height: cycleHeight, minHeight: cycleHeight }}
+            >
               {cycleHistory}
             </div>
           )}
         </div>
 
         {/* Right Workspace - Chat/Metadata (25%) */}
-        <aside className="w-[25%] min-w-[280px] max-w-[380px] h-full rounded-2xl overflow-hidden flex-shrink-0">
-          {workspace}
+        <aside className="w-[25%] min-w-[280px] max-w-[380px] h-full flex-shrink-0 flex flex-col gap-2">
+          <div className="flex-1 min-h-0 overflow-hidden rounded-2xl">
+            {workspace}
+          </div>
+          {/* Prompt Input always shown below the workspace panel */}
+          {promptInput && (
+            <div className="flex-shrink-0">
+              {promptInput}
+            </div>
+          )}
         </aside>
       </main>
-
-      {/* Prompt Input */}
-      <div className="px-4 pb-4 flex-shrink-0">
-        {promptInput}
-      </div>
     </div>
   );
 }

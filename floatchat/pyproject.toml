@@ -44,12 +44,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-# P4 #2: Suppress the Starlette/httpx deprecation warning emitted by
-# FastAPI's own TestClient import (not actionable from our code without a
-# dependency upgrade to httpx2).
+
 filterwarnings = [
-    # P4 #2: Starlette httpx deprecation (fires at import time from FastAPI's
-    # own TestClient — not actionable without upgrading to httpx2).
-    "ignore::starlette.exceptions.StarletteDeprecationWarning",
     "ignore:Using.*httpx.*deprecated",
 ]

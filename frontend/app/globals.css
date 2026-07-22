@@ -6,26 +6,38 @@
 
 @layer base {
   :root {
-    /* ── Light scientific workstation theme ──────────────────────────────
-       HSL channels consumed by tailwind.config.ts semantic tokens.
-       Canvas = near-white slate; ink = deep slate; primary = ocean blue.
+    /* ── Professional Light Theme (ArcGIS / Esri / marine-science portal inspired) ──
+       Clean off-white canvas with warm slate gray panels. Ocean-blue accents preserved.
+       High readability, premium look, not harsh white.
     */
-    --background: 210 40% 99%;          /* #fbfcfe — app canvas */
-    --foreground: 222 47% 11%;          /* #0f172a — primary ink */
-    --card: 0 0% 100%;                  /* #ffffff — panel surface */
-    --card-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;               /* #f1f5f9 — recessed fields */
-    --muted-foreground: 215 16% 47%;    /* #64748b — secondary text */
-    --border: 214 32% 91%;              /* #cbd5e1 — hairlines */
-    --primary: 217 76% 54%;             /* ocean 600 — actions */
+    --background: 210 20% 96%;           /* warm off-white, not pure white */
+    --foreground: 215 25% 15%;           /* deep slate text */
+    --card: 0 0% 100%;                   /* pure white cards */
+    --card-foreground: 215 25% 15%;
+    --muted: 210 16% 92%;                /* very light gray muted backgrounds */
+    --muted-foreground: 215 16% 45%;     /* medium-light gray text */
+    --border: 214 20% 82%;              /* soft light-gray borders */
+    --primary: 210 75% 50%;             /* ocean blue primary */
     --primary-foreground: 0 0% 100%;
-    --accent: 199 89% 48%;              /* ocean accent for highlights */
+    --accent: 200 78% 55%;
     --accent-foreground: 0 0% 100%;
-    --ring: 217 76% 54%;
-    --success: 152 60% 40%;             /* emerald */
-    --warning: 38 92% 50%;              /* amber */
-    --danger: 0 72% 51%;                /* red */
+    --ring: 210 75% 50%;
+    --success: 158 48% 40%;
+    --warning: 40 72% 45%;
+    --danger: 0 58% 55%;
     --radius: 0.625rem;
+
+    --surface: 210 18% 97%;             /* near-white panel surface */
+    --surface-900: 210 16% 98%;         /* lightest panels */
+    --surface-800: 210 14% 93%;         /* subtle card backgrounds */
+    --surface-700: 214 18% 84%;         /* border-strength surfaces */
+
+    /* Ocean scale kept for accents */
+    --ocean-50: #e0f2fe;
+    --ocean-100: #bae6fd;
+    --ocean-400: #38bdf8;
+    --ocean-500: #0ea5e9;
+    --ocean-600: #0284c8;
   }
 
   * {
@@ -90,19 +102,21 @@
   pointer-events: none !important;
 }
 
-/* GIS control styling overrides for the light theme */
+/* GIS control styling overrides for the light professional theme */
 .maplibregl-ctrl-group {
-  border-radius: 10px !important;
+  border-radius: 8px !important;
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12) !important;
-  border: 1px solid hsl(214 32% 88%) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12) !important;
+  border: 1px solid hsl(214 20% 82%) !important;
+  background: hsl(0 0% 100%) !important;
 }
 .maplibregl-ctrl-group button {
-  background-color: #ffffff !important;
+  background-color: hsl(0 0% 100%) !important;
+  color: #475569 !important;
 }
 .maplibregl-ctrl-group button:hover {
-  background-color: hsl(210 40% 96%) !important;
+  background-color: hsl(210 16% 93%) !important;
 }
 .maplibregl-ctrl-icon {
-  filter: brightness(0.35);
+  filter: none;
 }

@@ -199,7 +199,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                             marker=dict(color=marker_colors, size=6),
                             hovertext=hover,
                             hoverinfo="text",
-                            showlegend=(r == 1 and c == 1),
+                            showlegend=True,
                         ),
                         row=r, col=c,
                     )
@@ -213,7 +213,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                             marker=dict(size=5),
                             hovertext=hover,
                             hoverinfo="text",
-                            showlegend=(r == 1 and c == 1),
+                            showlegend=True,
                         ),
                         row=r, col=c,
                     )
@@ -341,7 +341,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                         marker=marker,
                         hovertext=hover,
                         hoverinfo="text",
-                        showlegend=(g_idx == 0),
+                        showlegend=True,
                     )
                 )
 

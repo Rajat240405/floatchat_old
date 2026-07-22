@@ -27,6 +27,21 @@ const config: Config = {
         success: "hsl(var(--success))",
         warning: "hsl(var(--warning))",
         danger: "hsl(var(--danger))",
+        // Surface scale — light professional theme (white-based).
+        // 950 = page background (warm off-white), 100 = strong text.
+        surface: {
+          50:  "#ffffff",          // pure white
+          100: "#f0f4f8",          // strong near-white (text base)
+          200: "#e2e8ef",          // secondary text / faint dividers
+          300: "#c8d3de",          // muted text
+          400: "#9aaabb",          // placeholder / disabled
+          500: "#697a8d",          // subdued labels
+          600: "#4a5568",          // body text
+          700: "hsl(var(--surface-700))",  // borders / dividers
+          800: "hsl(var(--surface-800))",  // panel backgrounds
+          900: "hsl(var(--surface-900))",  // card backgrounds
+          950: "hsl(var(--background))",   // page background (off-white)
+        },
         // Raw scales kept for charts, trajectories, and status badges.
         ocean: {
           50: "#eff8ff",

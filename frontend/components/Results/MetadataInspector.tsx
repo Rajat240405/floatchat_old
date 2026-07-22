@@ -49,33 +49,27 @@ export function MetadataInspector({
     setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // Status styling
+  // Status styling — light theme
   const statusConfig = {
     active: {
-      bg: "bg-emerald-500/10",
-      border: "border-emerald-500/30",
-      text: "text-emerald-400",
-      dot: "bg-emerald-400 animate-pulse",
-      label: "Active",
+      bg: "bg-emerald-50", border: "border-emerald-300", text: "text-emerald-700",
+      dot: "bg-emerald-500 animate-pulse", label: "Active",
     },
     drifted: {
-      bg: "bg-amber-500/10",
-      border: "border-amber-500/30",
-      text: "text-amber-400",
-      dot: "bg-amber-400",
-      label: "Drifted",
+      bg: "bg-amber-50", border: "border-amber-300", text: "text-amber-700",
+      dot: "bg-amber-500", label: "Drifted",
     },
     inactive: {
-      bg: "bg-surface-800/40",
-      border: "border-surface-700/40",
-      text: "text-surface-400",
-      dot: "bg-surface-500",
-      label: "Inactive",
+      bg: "bg-slate-100", border: "border-slate-300", text: "text-slate-500",
+      dot: "bg-slate-400", label: "Inactive",
     },
   };
 
   const status = info.status || "unknown";
-  const statusStyle = statusConfig[status as keyof typeof statusConfig] || statusConfig.inactive;
+  const resolvedStatus = statusConfig[status as keyof typeof statusConfig] || {
+    bg: "bg-slate-100", border: "border-slate-200", text: "text-slate-500",
+    dot: "bg-slate-400", label: "Unknown",
+  };
 
   // Battery styling
   const batteryPct = info.battery_percentage ?? 0;
@@ -111,24 +105,24 @@ export function MetadataInspector({
       className="flex flex-col h-full overflow-hidden"
     >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-surface-800/60 bg-surface-900/90 flex-shrink-0">
+      <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-r from-ocean-50 to-slate-50 flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-ocean-500/20 to-ocean-700/10 border border-ocean-500/25 flex items-center justify-center shadow-inner">
-            <Waves className="w-5 h-5 text-ocean-400" />
+          <div className="w-10 h-10 rounded-xl bg-ocean-100 border border-ocean-200 flex items-center justify-center shadow-sm">
+            <Waves className="w-5 h-5 text-ocean-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-extrabold text-surface-50 tracking-tight">
+            <h2 className="text-base font-extrabold text-slate-800 tracking-tight">
               Float {info.float_id}
             </h2>
             <div className="flex items-center gap-2 mt-0.5">
               {info.wmo_id && info.wmo_id !== info.float_id && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-ocean-500/10 text-ocean-400 font-medium">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-ocean-100 text-ocean-600 font-medium">
                   WMO: {info.wmo_id}
                 </span>
               )}
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${statusStyle.bg} ${statusStyle.border} ${statusStyle.text} font-bold border`}>
-                <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${statusStyle.dot}`} />
-                {statusStyle.label}
+              <span className={`text-[10px] px-1.5 py-0.5 rounded ${resolvedStatus.bg} ${resolvedStatus.border} ${resolvedStatus.text} font-bold border`}>
+                <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${resolvedStatus.dot}`} />
+                {resolvedStatus.label}
               </span>
             </div>
           </div>
@@ -249,7 +243,7 @@ export function MetadataInspector({
               {sensorsList.slice(0, showAllSensors ? undefined : 8).map((sensor) => (
                 <span
                   key={sensor}
-                  className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-ocean-500/10 text-ocean-400 border border-ocean-500/20"
+                  className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-ocean-50 text-ocean-600 border border-ocean-200"
                 >
                   {sensor}
                 </span>
@@ -278,51 +272,43 @@ export function MetadataInspector({
           {/* Battery */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-wider text-surface-500 font-semibold flex items-center gap-1.5">
-                <Battery className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">
+                <Battery className="w-3.5 h-3.5 text-amber-500" />
                 Battery Status
               </span>
               <span
                 className={`text-[11px] font-bold ${
                   batteryStatus === "Good"
-                    ? "text-emerald-400"
+                    ? "text-emerald-600"
                     : batteryStatus === "Fair"
-                      ? "text-sky-400"
+                      ? "text-sky-600"
                       : batteryStatus === "Low"
-                        ? "text-amber-400"
-                        : "text-surface-400"
+                        ? "text-amber-600"
+                        : "text-slate-400"
                 }`}
               >
                 {batteryStatus}
               </span>
             </div>
-            <div className="relative h-2.5 bg-surface-800 rounded-full overflow-hidden border border-surface-700/30">
+            <div className="relative h-2.5 bg-slate-200 rounded-full overflow-hidden border border-slate-300">
               <div
                 className={`absolute left-0 top-0 h-full ${batteryColor} transition-all`}
                 style={{ width: `${Math.max(3, batteryPct)}%` }}
               />
             </div>
-            <div className="flex items-center justify-between text-[10px] text-surface-500">
-              <span>
-                {batteryPct > 0 ? `~${batteryPct}%` : "N/A"}
-              </span>
-              <span>
-                {info.battery_voltage != null
-                  ? `${info.battery_voltage}V`
-                  : "N/A"}
-              </span>
+            <div className="flex items-center justify-between text-[10px] text-slate-500">
+              <span>{batteryPct > 0 ? `~${batteryPct}%` : "N/A"}</span>
+              <span>{info.battery_voltage != null ? `${info.battery_voltage}V` : "N/A"}</span>
             </div>
             {info.battery_note && !info.battery_note.includes("Estimated from") && (
-              <p className="text-[9px] text-surface-500 italic leading-tight">
-                {info.battery_note}
-              </p>
+              <p className="text-[9px] text-slate-400 italic leading-tight">{info.battery_note}</p>
             )}
           </div>
         </CollapsibleSection>
       </div>
 
       {/* Actions Footer */}
-      <div className="px-4 py-3 border-t border-surface-800/60 bg-surface-900/90 flex-shrink-0">
+      <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 flex-shrink-0">
         <div className="grid grid-cols-1 gap-2">
           <button
             onClick={onViewTrajectory}
@@ -343,14 +329,14 @@ export function MetadataInspector({
           </button>
           <button
             onClick={onViewLatestProfile}
-            className="w-full min-h-[36px] py-2 px-3 rounded-xl bg-surface-800 hover:bg-surface-700 active:bg-surface-600 text-surface-100 font-bold text-xs transition-all flex items-center justify-center gap-2 border border-surface-700/50 cursor-pointer"
+            className="w-full min-h-[36px] py-2 px-3 rounded-xl bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 font-bold text-xs transition-all flex items-center justify-center gap-2 border border-slate-200 hover:border-slate-300 cursor-pointer shadow-sm"
           >
             <ExternalLink className="w-4 h-4" />
             View Latest Profile
           </button>
           <button
             onClick={onDownloadMetadata}
-            className="w-full min-h-[36px] py-2 px-3 rounded-xl bg-surface-800/60 hover:bg-surface-800 text-surface-400 hover:text-surface-200 font-medium text-xs transition-all flex items-center justify-center gap-2 border border-surface-700/40 cursor-pointer"
+            className="w-full min-h-[36px] py-2 px-3 rounded-xl bg-white hover:bg-slate-50 text-slate-500 hover:text-slate-700 font-medium text-xs transition-all flex items-center justify-center gap-2 border border-slate-200 cursor-pointer"
           >
             <Download className="w-4 h-4" />
             Download Metadata
@@ -380,22 +366,22 @@ function CollapsibleSection({
   children,
 }: CollapsibleSectionProps) {
   return (
-    <div className="border-b border-surface-800/40">
+    <div className="border-b border-slate-200">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-surface-800/20 transition-colors cursor-pointer"
+        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors cursor-pointer"
       >
         <div className="flex items-center gap-2">
-          <span className="text-ocean-400">{icon}</span>
-          <span className="text-xs font-semibold text-surface-300">{title}</span>
+          <span className="text-ocean-500">{icon}</span>
+          <span className="text-xs font-semibold text-slate-600">{title}</span>
           {badge && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ocean-500/15 text-ocean-400 font-bold">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ocean-100 text-ocean-600 font-bold">
               {badge}
             </span>
           )}
         </div>
         <ChevronDown
-          className={`w-4 h-4 text-surface-500 transition-transform ${
+          className={`w-4 h-4 text-slate-400 transition-transform ${
             isOpen ? "rotate-180" : ""
           }`}
         />
@@ -437,15 +423,15 @@ function MetadataField({
 }: MetadataFieldProps) {
   return (
     <div className={span ? "col-span-2" : ""}>
-      <span className="text-[9px] uppercase tracking-wider text-surface-500 font-semibold block mb-0.5">
+      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold block mb-0.5">
         {label}
       </span>
       <span
         className={`
           text-xs font-medium block truncate
-          ${mono ? "font-mono text-surface-200" : "text-surface-300"}
-          ${highlight ? "text-ocean-400" : ""}
-          ${badge ? "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-ocean-500/10 border border-ocean-500/20" : ""}
+          ${mono ? "font-mono text-slate-700" : "text-slate-600"}
+          ${highlight ? "text-ocean-600 font-semibold" : ""}
+          ${badge ? "inline-flex items-center gap-1 px-2 py-0.5 rounded bg-ocean-50 border border-ocean-200 text-ocean-600" : ""}
         `}
       >
         {icon && <span className="opacity-60">{icon}</span>}
