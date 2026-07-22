@@ -20,3 +20,12 @@ build/
 
 # Data lake runtime caches (Nominatim geocoding results)
 floatchat/.data_lake/.gazetteer_cache/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
