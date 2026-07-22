@@ -26,6 +26,7 @@ interface UseChatReturn {
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   onScroll: () => void;
+  onSelectSuggestion: (query: string) => void;
   selectedFloat: string | null;
   setSelectedFloat: (floatId: string | null) => void;
 
@@ -59,6 +60,7 @@ interface UseChatReturn {
   floatSearch: string;
   setFloatSearch: (s: string) => void;
   submitFloatSearch: () => void;
+  loadCycleHistory: (floatId: string) => Promise<void>;
 }
 
 export function useChat(): UseChatReturn {
@@ -369,6 +371,14 @@ export function useChat(): UseChatReturn {
     [sendMessage]
   );
 
+  // ── Suggestion chip handler ──────────────────────────────────────────────
+  const onSelectSuggestion = useCallback(
+    (query: string) => {
+      sendMessage(query);
+    },
+    [sendMessage]
+  );
+
   return {
     messages,
     input,
@@ -379,6 +389,7 @@ export function useChat(): UseChatReturn {
     messagesEndRef,
     scrollContainerRef,
     onScroll,
+    onSelectSuggestion,
     selectedFloat,
     setSelectedFloat: handleSelectFloat,
     currentMapData,
