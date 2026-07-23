@@ -19,6 +19,7 @@ interface PlotDrawerProps {
   onClose: () => void;
   plots: PlotItem[];
   onTogglePin: (id: string) => void;
+  onRemovePlot?: (id: string) => void;
   /** Float IDs discovered in the current plot set. */
   floatIds?: string[];
   /** null = All Floats overlay. */
@@ -49,6 +50,7 @@ export function PlotDrawer({
   onClose,
   plots,
   onTogglePin,
+  onRemovePlot,
   floatIds = [],
   selectedFloatId = null,
   onSelectFloatId,
@@ -294,6 +296,7 @@ export function PlotDrawer({
                     setFullscreenPlot(fullscreenPlot === plot.id ? null : plot.id)
                   }
                   onTogglePin={() => onTogglePin(plot.id)}
+                  onRemove={onRemovePlot ? () => onRemovePlot(plot.id) : undefined}
                   onDownloadCsv={() => downloadCsv(plot)}
                 />
               ))}
@@ -338,6 +341,7 @@ interface PlotCardProps {
   onToggleExpand: () => void;
   onToggleFullscreen: () => void;
   onTogglePin: () => void;
+  onRemove?: () => void;
   onDownloadCsv: () => void;
 }
 
@@ -350,6 +354,7 @@ function PlotCard({
   onToggleExpand,
   onToggleFullscreen,
   onTogglePin,
+  onRemove,
   onDownloadCsv,
 }: PlotCardProps) {
   const chartRef = useRef<HTMLDivElement>(null);
@@ -391,7 +396,9 @@ function PlotCard({
 
       // Force a resize so legends/axes fit the drawer width
       try {
-        await Plotly.Plots.resize(chartRef.current);
+        if (chartRef.current && chartRef.current.offsetWidth > 0) {
+          await Plotly.Plots.resize(chartRef.current).catch(() => { /* ignore */ });
+        }
       } catch {
         /* ignore */
       }
@@ -409,9 +416,9 @@ function PlotCard({
     if (!isExpanded || !chartRef.current) return;
     const el = chartRef.current;
     const ro = new ResizeObserver(() => {
-      if (plotlyRef.current && el) {
+      if (plotlyRef.current && el && el.offsetWidth > 0) {
         try {
-          plotlyRef.current.Plots.resize(el);
+          plotlyRef.current.Plots.resize(el).catch(() => { /* ignore */ });
         } catch {
           /* ignore */
         }
@@ -475,6 +482,15 @@ function PlotCard({
               title="Fullscreen"
             >
               <Maximize2 className="w-3.5 h-3.5 rotate-45" />
+            </button>
+          )}
+          {onRemove && (
+            <button
+              onClick={onRemove}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+              title="Remove plot"
+            >
+              <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
@@ -570,7 +586,9 @@ function FullscreenPlotOverlay({
         }
       );
       try {
-        await Plotly.Plots.resize(chartRef.current);
+        if (chartRef.current && chartRef.current.offsetWidth > 0) {
+          await Plotly.Plots.resize(chartRef.current).catch(() => { /* ignore */ });
+        }
       } catch {
         /* ignore */
       }
@@ -584,9 +602,9 @@ function FullscreenPlotOverlay({
     window.addEventListener("keydown", onKey);
 
     const onResize = () => {
-      if (plotlyRef.current && chartRef.current) {
+      if (plotlyRef.current && chartRef.current && chartRef.current.offsetWidth > 0) {
         try {
-          plotlyRef.current.Plots.resize(chartRef.current);
+          plotlyRef.current.Plots.resize(chartRef.current).catch(() => { /* ignore */ });
         } catch {
           /* ignore */
         }

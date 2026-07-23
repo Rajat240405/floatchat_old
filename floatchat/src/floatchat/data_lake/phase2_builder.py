@@ -71,7 +71,7 @@ HTTP_TIMEOUT = 120
 HTTP_MAX_CONNECTIONS = 20
 
 # Float ID regex
-FLOAT_ID_RE = re.compile(r"/(\d{7,})/")
+FLOAT_ID_RE = re.compile(r"[\\/](\d{7,})[\\/]")
 CYCLE_RE = re.compile(r"_(\d{3})\.nc$")
 
 # ── Index loading ───────────────────────────────────────────────────────── #
@@ -315,13 +315,32 @@ def parse_netcdf_to_tables(
     chla = _read_var("CHLA")
     chla_qc = _read_qc("CHLA_QC")
     chla_adjusted = _read_var("CHLA_ADJUSTED")
+    bbp700 = _read_var("BBP700")
+    bbp700_qc = _read_qc("BBP700_QC")
+    bbp700_adjusted = _read_var("BBP700_ADJUSTED")
+    nitrate = _read_var("NITRATE")
+    nitrate_qc = _read_qc("NITRATE_QC")
+    nitrate_adjusted = _read_var("NITRATE_ADJUSTED")
+    ph_in_situ_total = _read_var("PH_IN_SITU_TOTAL")
+    ph_in_situ_total_qc = _read_qc("PH_IN_SITU_TOTAL_QC")
+    ph_in_situ_total_adjusted = _read_var("PH_IN_SITU_TOTAL_ADJUSTED")
+    downwelling_par = _read_var("DOWNWELLING_PAR")
+    downwelling_par_qc = _read_qc("DOWNWELLING_PAR_QC")
+    downwelling_par_adjusted = _read_var("DOWNWELLING_PAR_ADJUSTED")
 
     # Build available_variables list
     available_vars = []
     for var_name, data in [
         ("TEMP", temp), ("PSAL", psal), ("DOXY", doxy), ("CHLA", chla),
+        ("BBP700", bbp700), ("NITRATE", nitrate),
+        ("PH_IN_SITU_TOTAL", ph_in_situ_total),
+        ("DOWNWELLING_PAR", downwelling_par),
         ("TEMP_ADJUSTED", temp_adjusted), ("PSAL_ADJUSTED", psal_adjusted),
         ("DOXY_ADJUSTED", doxy_adjusted), ("CHLA_ADJUSTED", chla_adjusted),
+        ("BBP700_ADJUSTED", bbp700_adjusted),
+        ("NITRATE_ADJUSTED", nitrate_adjusted),
+        ("PH_IN_SITU_TOTAL_ADJUSTED", ph_in_situ_total_adjusted),
+        ("DOWNWELLING_PAR_ADJUSTED", downwelling_par_adjusted),
     ]:
         if np.any(~np.isnan(data)):
             available_vars.append(var_name)
@@ -360,6 +379,18 @@ def parse_netcdf_to_tables(
         "chla": chla,
         "chla_qc": chla_qc,
         "chla_adjusted": chla_adjusted,
+        "bbp700": bbp700,
+        "bbp700_qc": bbp700_qc,
+        "bbp700_adjusted": bbp700_adjusted,
+        "nitrate": nitrate,
+        "nitrate_qc": nitrate_qc,
+        "nitrate_adjusted": nitrate_adjusted,
+        "ph_in_situ_total": ph_in_situ_total,
+        "ph_in_situ_total_qc": ph_in_situ_total_qc,
+        "ph_in_situ_total_adjusted": ph_in_situ_total_adjusted,
+        "downwelling_par": downwelling_par,
+        "downwelling_par_qc": downwelling_par_qc,
+        "downwelling_par_adjusted": downwelling_par_adjusted,
         "region_tag": [record["region_tag"]] * n_levels,
         "source_file": [file_path] * n_levels,
         "dac": [record["institution"]] * n_levels,
@@ -700,9 +731,9 @@ class Phase2DataLakeBuilder:
         logger.info("Step 3/7: Parsing NetCDF files into tables (resumable)...")
         t0 = time.perf_counter()
 
-        # Use deduped record lists from download step (or fall back if skipped)
-        core_records = getattr(self, "_deduped_core", None) or []
-        bio_records = getattr(self, "_deduped_bio", None) or []
+        # Use deduped record lists from download step (or fall back to index if skipped)
+        core_records = self._deduped_core if getattr(self, "_deduped_core", None) else self.core_records
+        bio_records = self._deduped_bio if getattr(self, "_deduped_bio", None) else self.bio_records
 
         # If no records loaded yet (e.g. --skip-download with no prior download),
         # load from raw dir
@@ -716,17 +747,59 @@ class Phase2DataLakeBuilder:
                     m_fid = FLOAT_ID_RE.search(str(rel))
                     m_cyc = CYCLE_RE.search(str(rel))
                     if m_fid and m_cyc:
+                        lat = 0.0
+                        lon = 0.0
+                        prof_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
+                        inst = ""
+                        ptype = ""
+                        dmode = "R"
+                        
+                        try:
+                            import netCDF4
+                            with netCDF4.Dataset(nc_file, "r") as ds:
+                                if "LATITUDE" in ds.variables:
+                                    val = ds.variables["LATITUDE"][0]
+                                    if not np.isnan(val) and not np.ma.is_masked(val): lat = float(val)
+                                if "LONGITUDE" in ds.variables:
+                                    val = ds.variables["LONGITUDE"][0]
+                                    if not np.isnan(val) and not np.ma.is_masked(val): lon = float(val)
+                                if "JULD" in ds.variables:
+                                    val = ds.variables["JULD"][0]
+                                    if not np.isnan(val) and not np.ma.is_masked(val):
+                                        prof_date = datetime(1950, 1, 1, tzinfo=timezone.utc) + pd.Timedelta(days=float(val))
+                                
+                                def _decode_char(var_name):
+                                    if var_name in ds.variables:
+                                        var = ds.variables[var_name]
+                                        try:
+                                            return netCDF4.chartostring(var[:])[0].strip()
+                                        except Exception:
+                                            try:
+                                                data = var[:]
+                                                if hasattr(data, "tobytes"):
+                                                    return data.tobytes().decode("utf-8", "ignore").replace("\x00", "").strip()
+                                            except Exception:
+                                                pass
+                                    return ""
+                                
+                                inst = getattr(ds, "INSTITUTION", _decode_char("INSTITUTION"))
+                                ptype = getattr(ds, "PLATFORM_TYPE", _decode_char("PLATFORM_TYPE"))
+                                dmode_char = _decode_char("DATA_MODE")
+                                if dmode_char: dmode = dmode_char
+                        except Exception as e:
+                            logger.debug("Failed to extract metadata from %s: %s", nc_file, e)
+
                         records_list.append({
                             "file": str(rel),
                             "float_id": m_fid.group(1),
                             "cycle_number": int(m_cyc.group(1)),
-                            "date": datetime(2000, 1, 1, tzinfo=timezone.utc),
-                            "latitude": 0.0,
-                            "longitude": 0.0,
-                            "institution": "",
-                            "profiler_type": "",
-                            "parameter_data_mode": "R",
-                            "region_tag": "indian_ocean",
+                            "date": prof_date,
+                            "latitude": lat,
+                            "longitude": lon,
+                            "institution": str(inst),
+                            "profiler_type": str(ptype),
+                            "parameter_data_mode": str(dmode),
+                            "region_tag": _classify_region(lat, lon),
                         })
 
         # Flatten: (record, dtype) pairs
@@ -1077,7 +1150,11 @@ class Phase2DataLakeBuilder:
         combined["lon"] = combined["lon"].astype("float32")
 
         for col in ["temp", "temp_adjusted", "psal", "psal_adjusted",
-                     "doxy", "doxy_adjusted", "chla", "chla_adjusted"]:
+                     "doxy", "doxy_adjusted", "chla", "chla_adjusted",
+                     "bbp700", "bbp700_adjusted",
+                     "nitrate", "nitrate_adjusted",
+                     "ph_in_situ_total", "ph_in_situ_total_adjusted",
+                     "downwelling_par", "downwelling_par_adjusted"]:
             if col in combined.columns:
                 combined[col] = combined[col].astype("float32")
 

@@ -57,6 +57,7 @@ export default function HomePage() {
     plotDrawerOpen,
     setPlotDrawerOpen,
     togglePlotPin,
+    removePlot,
     plotFloatIds,
     plotSelectedFloat,
     setPlotSelectedFloat,
@@ -413,6 +414,7 @@ export default function HomePage() {
         onClose={() => setPlotDrawerOpen(false)}
         plots={plotItems}
         onTogglePin={togglePlotPin}
+        onRemovePlot={removePlot}
         floatIds={plotFloatIds}
         selectedFloatId={plotSelectedFloat}
         onSelectFloatId={setPlotSelectedFloat}

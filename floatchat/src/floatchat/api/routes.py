@@ -1352,10 +1352,17 @@ def _get_lake():
     from floatchat.data_lake.duckdb_lake import DuckDBDataLake
     from floatchat.config import settings
 
-    return DuckDBDataLake(
-        phase2_root=Path(settings.data_lake_dir) if settings.data_lake_phase2_enabled else None,
-        use_phase2=settings.data_lake_phase2_enabled,
-    )
+    if settings.data_lake_phase2_enabled:
+        phase2_dir = Path(settings.data_lake_dir)
+        lake = DuckDBDataLake(
+            phase2_root=phase2_dir,
+            use_phase2=True,
+        )
+        if lake.is_phase2_available():
+            return lake
+
+    lake_root = Path(settings.data_lake_root)
+    return DuckDBDataLake(lake_root=lake_root)
 
 
 @router.get("/floats/{float_id}/metadata", response_model=FloatMetadataAPIResponse)
@@ -1463,7 +1470,7 @@ def get_float_trajectory(float_id: str):
                         f"COALESCE(arg_max(dac, date), '') AS dac, "
                         f"{av_sel.replace('available_variables', 'arg_max(available_variables, date)') if has_av else av_sel} "
                         f"FROM read_parquet('{pi_path}', hive_partitioning=true) "
-                        f"WHERE regexp_replace(CAST(float_id AS VARCHAR), '\\.0$', '') = ? "
+                        f"WHERE float_id = ? "
                         f"GROUP BY float_id, cycle_number "
                         f"ORDER BY min(date) ASC"
                     )
@@ -1475,7 +1482,7 @@ def get_float_trajectory(float_id: str):
                         f"CAST(NULL AS INTEGER) AS cycle_number, "
                         f"CAST('' AS VARCHAR) AS available_variables "
                         f"FROM read_parquet('{pi_path}', hive_partitioning=true) "
-                        f"WHERE regexp_replace(CAST(float_id AS VARCHAR), '\\.0$', '') = ? "
+                        f"WHERE float_id = ? "
                         f"GROUP BY float_id, date ORDER BY date ASC"
                     )
                 df = conn.execute(sql, [clean]).fetchdf()
@@ -1528,7 +1535,7 @@ def get_float_trajectory(float_id: str):
                 avg(CASE WHEN pressure <= 20 THEN COALESCE(temp_adjusted, temp) END) AS temp_surface,
                 avg(CASE WHEN pressure <= 20 THEN COALESCE(psal_adjusted, psal) END) AS psal_surface
             FROM read_parquet('{levels_path}', hive_partitioning=true)
-            WHERE regexp_replace(CAST(float_id AS VARCHAR), '\\.0$', '') = ?
+            WHERE float_id = ?
             GROUP BY cycle_number
             """
             sdf = conn.execute(stats_sql, [clean]).fetchdf()
@@ -1790,7 +1797,7 @@ def _count_profiles_with_variable(lake, float_id: str, var: str) -> int:
                 sql = f"""
                 SELECT COUNT(DISTINCT cycle_number) AS n
                 FROM read_parquet('{levels_path}', hive_partitioning=true)
-                WHERE regexp_replace(CAST(float_id AS VARCHAR), '\\.0$', '') = ?
+                WHERE float_id = ?
                   AND (
                     ({adj} IS NOT NULL AND NOT isnan({adj}))
                     OR ({raw} IS NOT NULL AND NOT isnan({raw}))

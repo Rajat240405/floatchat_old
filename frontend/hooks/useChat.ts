@@ -68,6 +68,7 @@ interface UseChatReturn {
   plotDrawerOpen: boolean;
   setPlotDrawerOpen: (open: boolean) => void;
   togglePlotPin: (id: string) => void;
+  removePlot: (id: string) => void;
   plotFloatIds: string[];
   plotSelectedFloat: string | null;
   setPlotSelectedFloat: (id: string | null) => void;
@@ -489,17 +490,17 @@ export function useChat(): UseChatReturn {
         const figures =
           response.figures ?? (response.figure ? [response.figure] : []);
         if (figures.length > 0) {
-          setPlotItems(
-            figures.map((f, i) => ({
+          setPlotItems((prev) => {
+            const newItems = figures.map((f, i) => ({
               id: `plot-${floatId}-${variable}-${i}`,
               variable: f.variable ?? variable,
-              title: f.variable
-                ? String(f.variable)
-                : variable,
+              title: f.variable ? String(f.variable) : variable,
               figure: f,
               pinned: false,
-            }))
-          );
+            }));
+            const filteredPrev = prev.filter((p) => p.variable !== variable);
+            return [...filteredPrev, ...newItems];
+          });
           setPlotSelectedFloat(floatId);
           setPlotDrawerOpen(true);
         }
@@ -1016,6 +1017,10 @@ export function useChat(): UseChatReturn {
     );
   }, []);
 
+  const removePlot = useCallback((id: string) => {
+    setPlotItems((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
   const submitFloatSearch = useCallback(() => {
     const raw = floatSearch.trim();
     if (!raw) return;
@@ -1076,6 +1081,7 @@ export function useChat(): UseChatReturn {
     plotDrawerOpen,
     setPlotDrawerOpen,
     togglePlotPin,
+    removePlot,
     plotFloatIds,
     plotSelectedFloat,
     setPlotSelectedFloat,

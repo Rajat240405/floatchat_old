@@ -106,7 +106,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         # Dedup preserve order
         available = list(dict.fromkeys(available))
 
-        if not available:
+        if not available and not intent.variables:
             # Fallback to any known var that exists
             for cand in ["TEMP", "PSAL", "DOXY", "CHLA", "BBP700", "NITRATE", "PH_IN_SITU_TOTAL"]:
                 if cand in df.columns and df[cand].notna().any():
@@ -270,7 +270,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                 available.append(v)
         available = list(dict.fromkeys(available))
 
-        if not available:
+        if not available and not intent.variables:
             for cand in ["TEMP", "PSAL", "DOXY", "CHLA", "BBP700", "NITRATE", "PH_IN_SITU_TOTAL"]:
                 if cand in df.columns and df[cand].notna().any():
                     available.append(cand)

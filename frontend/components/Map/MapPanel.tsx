@@ -198,11 +198,6 @@ export function MapPanel({
         const pcRaw = (d as { profile_count?: number | null }).profile_count;
         const pc =
           typeof pcRaw === "number" && isFinite(pcRaw) ? Math.max(0, pcRaw) : 0;
-        // Continuous radius from profile_count: ~5px (few) → ~14px (100+).
-        const sizeFromCount = Math.min(
-          14,
-          Math.max(5, 4.5 + Math.sqrt(Math.max(pc, 1)) * 0.95)
-        );
         return {
           type: "Feature" as const,
           geometry: {
@@ -213,7 +208,7 @@ export function MapPanel({
             float_id: d.float_id,
             profile_number: cycle,
             profile_count: pc,
-            marker_size: isTrajectoryMode ? 6 : sizeFromCount,
+            marker_size: isTrajectoryMode ? 6 : 7,
             status: d.status || "unknown",
             dac: d.dac || "",
             profile_date: d.profile_date || "",
