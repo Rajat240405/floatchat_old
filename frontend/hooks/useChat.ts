@@ -20,7 +20,10 @@ import {
   getFloatMetadata,
   getFloatTrajectory,
   getFloatLatestProfile,
+  getFloatAvailablePlots,
+  getFloatVariablePlot,
 } from "@/services/api";
+import type { AvailablePlotItem } from "@/services/api";
 import type { FloatRegistryInfo } from "@/types";
 import { generateId, applyFilters } from "@/lib/utils";
 
@@ -56,6 +59,11 @@ interface UseChatReturn {
   showTrajectory: () => Promise<void>;
   loadLatestProfile: () => Promise<void>;
 
+  /** Deterministic available scientific plots for the selected float. */
+  availablePlots: AvailablePlotItem[];
+  isLoadingAvailablePlots: boolean;
+  loadVariablePlot: (variable: string) => Promise<void>;
+
   plotItems: PlotItem[];
   plotDrawerOpen: boolean;
   setPlotDrawerOpen: (open: boolean) => void;
@@ -66,6 +74,10 @@ interface UseChatReturn {
 
   filters: FilterState;
   setFilters: (f: FilterState) => void;
+  /** Apply filters; clears float focus so the map stays filter-driven. */
+  updateFilters: (f: FilterState) => void;
+  /** Full app reset: filters + selection + trajectory + panels. */
+  clearAll: () => void;
   filteredMapData: MapData[];
   availableFilterOptions: {
     networks: string[];
@@ -181,6 +193,8 @@ export function useChat(): UseChatReturn {
   const [trajectoryVisible, setTrajectoryVisible] = useState(false);
   const [floatInfo, setFloatInfo] = useState<FloatRegistryInfo | null>(null);
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
+  const [availablePlots, setAvailablePlots] = useState<AvailablePlotItem[]>([]);
+  const [isLoadingAvailablePlots, setIsLoadingAvailablePlots] = useState(false);
   const [plotItems, setPlotItems] = useState<PlotItem[]>([]);
   const [plotDrawerOpen, setPlotDrawerOpen] = useState(false);
   const [plotSelectedFloat, setPlotSelectedFloat] = useState<string | null>(null);
@@ -228,31 +242,35 @@ export function useChat(): UseChatReturn {
     [messages]
   );
 
-  // Map ownership:
-  //  1. Focus + trajectory visible → trajectory points
-  //  2. Focus only → single latest marker
-  //  3. Multi-float query overlay
-  //  4. Full registry
-  const currentMapData = useMemo(() => {
-    if (focusFloatId) {
-      if (trajectoryVisible && trajectoryMapData && trajectoryMapData.length > 0) {
-        return trajectoryMapData;
-      }
-      if (focusMapData && focusMapData.length > 0) return focusMapData;
-    }
-    if (!focusFloatId && queryMapData && queryMapData.length > 0) {
-      return queryMapData;
-    }
+  // Map ownership (filters are the source of truth):
+  //  Base dataset = registry (or multi-float chat overlay), NEVER replaced by
+  //  a single selected float. Selecting a float only highlights a marker and
+  //  opens side panels. Trajectory points are merged onto the base set when
+  //  the user explicitly requests View Trajectory.
+  const baseMapData = useMemo(() => {
+    if (queryMapData && queryMapData.length > 0) return queryMapData;
     if (initialMapData.length > 0) return initialMapData;
     return chatMapData;
+  }, [queryMapData, initialMapData, chatMapData]);
+
+  const currentMapData = useMemo(() => {
+    // ANALYSIS MODE: only trajectory + cycle markers (hide all other floats)
+    if (
+      trajectoryVisible &&
+      trajectoryMapData &&
+      trajectoryMapData.length > 0 &&
+      (focusFloatId || selectedFloat)
+    ) {
+      return trajectoryMapData;
+    }
+    // EXPLORATION MODE: full base set; selection only highlights (dimming on map)
+    return baseMapData;
   }, [
-    focusFloatId,
-    focusMapData,
+    baseMapData,
     trajectoryVisible,
     trajectoryMapData,
-    queryMapData,
-    chatMapData,
-    initialMapData,
+    focusFloatId,
+    selectedFloat,
   ]);
 
   const isFloatFocusMode = Boolean(focusFloatId);
@@ -347,40 +365,49 @@ export function useChat(): UseChatReturn {
   /** Load cycle history table only — deterministic REST, no map draw. */
   const loadCycleHistory = useCallback(
     async (floatId: string) => {
-      if (isLoadingCycles) return;
+      if (!floatId) return;
       setIsLoadingCycles(true);
       try {
         const { cycles } = await fetchTrajectoryData(floatId);
         setCycleData(cycles.length > 0 ? cycles : null);
         setHighlightCycle(null);
-      } catch {
+      } catch (e) {
+        console.warn("Cycle history failed", e);
         setCycleData(null);
       } finally {
         setIsLoadingCycles(false);
       }
     },
-    [isLoadingCycles, fetchTrajectoryData]
+    [fetchTrajectoryData]
   );
 
   /** Explicit View Trajectory — deterministic REST, draw path on map. */
   const showTrajectory = useCallback(async () => {
-    const floatId = focusFloatId || selectedFloat;
-    if (!floatId || isLoadingCycles) return;
+    const floatId = (selectedFloat || focusFloatId || "").trim();
+    if (!floatId) {
+      console.warn("View Trajectory: no float selected");
+      return;
+    }
     setIsLoadingCycles(true);
     try {
       const { cycles, points } = await fetchTrajectoryData(floatId);
       setCycleData(cycles.length > 0 ? cycles : null);
+      setHighlightCycle(null);
       if (points.length > 0) {
         setTrajectoryMapData(points);
         setTrajectoryVisible(true);
+      } else {
+        // Still mark visible so UI can show empty trajectory state if needed
+        setTrajectoryMapData([]);
+        setTrajectoryVisible(false);
+        console.warn("View Trajectory: no coordinate points for", floatId);
       }
-      setHighlightCycle(null);
-    } catch {
-      /* keep prior state */
+    } catch (e) {
+      console.warn("View Trajectory failed", e);
     } finally {
       setIsLoadingCycles(false);
     }
-  }, [focusFloatId, selectedFloat, isLoadingCycles, fetchTrajectoryData]);
+  }, [focusFloatId, selectedFloat, fetchTrajectoryData]);
 
   /** Show Latest Profile — deterministic REST, opens plot drawer. No LLM. */
   const loadLatestProfile = useCallback(async () => {
@@ -410,6 +437,80 @@ export function useChat(): UseChatReturn {
       setIsLoading(false);
     }
   }, [focusFloatId, selectedFloat, isLoading]);
+
+  /** Catalogue available scientific plots — deterministic REST, no LLM. */
+  const availablePlotsReqRef = useRef(0);
+  const loadAvailablePlots = useCallback(async (floatId: string) => {
+    if (!floatId) {
+      setAvailablePlots([]);
+      setIsLoadingAvailablePlots(false);
+      return;
+    }
+    const reqId = ++availablePlotsReqRef.current;
+    setIsLoadingAvailablePlots(true);
+    setAvailablePlots([]);
+    try {
+      const resp = await getFloatAvailablePlots(floatId);
+      // Ignore stale responses if user selected another float
+      if (reqId !== availablePlotsReqRef.current) return;
+      const raw: unknown = resp;
+      let plots: AvailablePlotItem[] = [];
+      if (raw && typeof raw === "object") {
+        const obj = raw as Record<string, unknown>;
+        if (Array.isArray(obj.plots)) {
+          plots = obj.plots as AvailablePlotItem[];
+        } else if (Array.isArray(obj.data)) {
+          plots = obj.data as AvailablePlotItem[];
+        } else if (Array.isArray(raw)) {
+          plots = raw as AvailablePlotItem[];
+        }
+      }
+      setAvailablePlots(plots);
+    } catch (e) {
+      console.warn("Available plots failed", e);
+      if (reqId === availablePlotsReqRef.current) {
+        setAvailablePlots([]);
+      }
+    } finally {
+      if (reqId === availablePlotsReqRef.current) {
+        setIsLoadingAvailablePlots(false);
+      }
+    }
+  }, []);
+
+  /** Open one variable plot via REST — no LLM. */
+  const loadVariablePlot = useCallback(
+    async (variable: string) => {
+      const floatId = focusFloatId || selectedFloat;
+      if (!floatId || !variable || isLoading) return;
+      setIsLoading(true);
+      try {
+        const response = await getFloatVariablePlot(floatId, variable);
+        const figures =
+          response.figures ?? (response.figure ? [response.figure] : []);
+        if (figures.length > 0) {
+          setPlotItems(
+            figures.map((f, i) => ({
+              id: `plot-${floatId}-${variable}-${i}`,
+              variable: f.variable ?? variable,
+              title: f.variable
+                ? String(f.variable)
+                : variable,
+              figure: f,
+              pinned: false,
+            }))
+          );
+          setPlotSelectedFloat(floatId);
+          setPlotDrawerOpen(true);
+        }
+      } catch (e) {
+        console.warn("Variable plot failed", e);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [focusFloatId, selectedFloat, isLoading]
+  );
 
   /** Load authoritative metadata via REST — NO LLM. */
   const loadFloatMetadata = useCallback(async (floatId: string) => {
@@ -500,16 +601,21 @@ export function useChat(): UseChatReturn {
    */
   const openFloatInspector = useCallback(
     async (floatId: string) => {
-      setFocusFloatId(floatId);
-      setSelectedFloat(floatId);
+      const fid = String(floatId || "").trim();
+      if (!fid) return;
+
+      setFocusFloatId(fid);
+      setSelectedFloat(fid);
       setMode("metadata");
       setChatOpenState(false);
       setHighlightCycle(null);
+      // Clear previous trajectory when switching floats
       setTrajectoryVisible(false);
       setTrajectoryMapData(null);
-      setQueryMapData(null);
+      setAvailablePlots([]);
+      setIsLoadingAvailablePlots(true);
 
-      const single = markerForFloat(floatId, [
+      const single = markerForFloat(fid, [
         focusMapData || [],
         trajectoryMapData || [],
         queryMapData || [],
@@ -517,13 +623,27 @@ export function useChat(): UseChatReturn {
         initialMapData,
       ]);
       if (single) {
-        setFocusMapData([{ ...single, selected: true }]);
+        setFocusMapData([{ ...single, selected: true, float_id: fid }]);
+      } else {
+        // Still record focus id even without a local marker
+        setFocusMapData([{
+          float_id: fid,
+          latitude: 0,
+          longitude: 0,
+          profile_date: null,
+          dac: "",
+          variables: [],
+          selected: true,
+          status: "unknown",
+        }]);
       }
 
-      // Deterministic REST — metadata + cycles in parallel, no LLM
-      await Promise.all([
-        loadFloatMetadata(floatId),
-        loadCycleHistory(floatId),
+      // Deterministic REST — metadata + cycles + plot catalogue in parallel, no LLM.
+      // Use allSettled so one failure cannot leave another spinner stuck.
+      await Promise.allSettled([
+        loadFloatMetadata(fid),
+        loadCycleHistory(fid),
+        loadAvailablePlots(fid),
       ]);
     },
     [
@@ -534,10 +654,54 @@ export function useChat(): UseChatReturn {
       initialMapData,
       loadCycleHistory,
       loadFloatMetadata,
+      loadAvailablePlots,
     ]
   );
 
   const clearFloatFocus = useCallback(() => {
+    setFocusFloatId(null);
+    setFocusMapData(null);
+    setTrajectoryVisible(false);
+    setTrajectoryMapData(null);
+    setSelectedFloat(null);
+    setFloatInfo(null);
+    setAvailablePlots([]);
+    setIsLoadingAvailablePlots(false);
+    setIsLoadingMetadata(false);
+    setIsLoadingCycles(false);
+    setMode("chat");
+    setChatOpenState(false);
+    setCycleData(null);
+    setHighlightCycle(null);
+    // NOTE: do not clear queryMapData here — chat multi-float overlays are separate.
+    // clearAll() clears query overlay when resetting the whole app.
+  }, []);
+
+  /** Filters drive the map. Changing them exits float focus so the full
+   *  filtered registry remains visible. */
+  const updateFilters = useCallback(
+    (f: FilterState) => {
+      setFilters(f);
+      // Exit single-float focus / trajectory so map shows filter results
+      setFocusFloatId(null);
+      setFocusMapData(null);
+      setTrajectoryVisible(false);
+      setTrajectoryMapData(null);
+      setSelectedFloat(null);
+      setFloatInfo(null);
+      setAvailablePlots([]);
+      setIsLoadingAvailablePlots(false);
+      setCycleData(null);
+      setHighlightCycle(null);
+      setMode("chat");
+      setChatOpenState(false);
+    },
+    []
+  );
+
+  /** Full reset to initial dashboard state (Clear button). */
+  const clearAll = useCallback(() => {
+    setFilters(EMPTY_FILTERS);
     setFocusFloatId(null);
     setFocusMapData(null);
     setQueryMapData(null);
@@ -545,40 +709,29 @@ export function useChat(): UseChatReturn {
     setTrajectoryMapData(null);
     setSelectedFloat(null);
     setFloatInfo(null);
+    setAvailablePlots([]);
+    setIsLoadingAvailablePlots(false);
+    setIsLoadingMetadata(false);
+    setIsLoadingCycles(false);
     setMode("chat");
     setChatOpenState(false);
     setCycleData(null);
     setHighlightCycle(null);
+    setPlotDrawerOpen(false);
+    setFloatSearch("");
   }, []);
 
   // Marker click handler
   const handleSelectFloat = useCallback(
     async (floatId: string | null) => {
       if (!floatId) {
-        // Deselect inspector but keep a single-float pin so user can re-click
-        if (selectedFloat && focusFloatId) {
-          setSelectedFloat(null);
-          setFloatInfo(null);
-          setMode("chat");
-          setCycleData(null);
-          setHighlightCycle(null);
-          setTrajectoryVisible(false);
-          setTrajectoryMapData(null);
-          if (focusMapData) {
-            setFocusMapData(
-              focusMapData.map((m) => ({ ...m, selected: false }))
-            );
-          }
-          return;
-        }
-        // Empty-map click with no selection → restore full registry
-        // (natural transition; no floating Dashboard control needed)
+        // Deselect float → back to filtered registry view (filters unchanged)
         clearFloatFocus();
         return;
       }
-      await openFloatInspector(floatId);
+      await openFloatInspector(String(floatId).trim());
     },
-    [selectedFloat, focusFloatId, focusMapData, clearFloatFocus, openFloatInspector]
+    [clearFloatFocus, openFloatInspector]
   );
 
   const setChatOpen = useCallback((open: boolean) => {
@@ -633,13 +786,38 @@ export function useChat(): UseChatReturn {
   }, [sourceDataForFilters]);
 
   const filteredMapData = useMemo(() => {
-    return applyFilters(currentMapData, filters);
-  }, [currentMapData, filters]);
+    const fid = selectedFloat || focusFloatId;
 
+    // ── ANALYSIS MODE: only trajectory / cycle markers for the selected float ──
+    if (trajectoryVisible && fid && trajectoryMapData && trajectoryMapData.length > 0) {
+      return trajectoryMapData.map((m, idx, arr) => ({
+        ...m,
+        selected: idx === arr.length - 1,
+      }));
+    }
+
+    // ── EXPLORATION MODE: full filtered registry; highlight selection, dim others ──
+    const filtered = applyFilters(baseMapData, filters);
+    if (fid) {
+      return filtered.map((m) =>
+        m.float_id === fid ? { ...m, selected: true } : { ...m, selected: false }
+      );
+    }
+    return filtered.map((m) => ({ ...m, selected: false }));
+  }, [
+    baseMapData,
+    filters,
+    selectedFloat,
+    focusFloatId,
+    trajectoryVisible,
+    trajectoryMapData,
+  ]);
+  // Sidebar count always reflects exploration filters (not trajectory point count)
   const totalFloatCount = useMemo(() => {
-    const ids = new Set(filteredMapData.map((m) => m.float_id));
+    const filtered = applyFilters(baseMapData, filters);
+    const ids = new Set(filtered.map((m) => m.float_id));
     return ids.size;
-  }, [filteredMapData]);
+  }, [baseMapData, filters]);
 
   const bootstrapInitialRegistry = useCallback(async () => {
     try {
@@ -891,6 +1069,9 @@ export function useChat(): UseChatReturn {
     trajectoryVisible,
     showTrajectory,
     loadLatestProfile,
+    availablePlots,
+    isLoadingAvailablePlots,
+    loadVariablePlot,
     plotItems,
     plotDrawerOpen,
     setPlotDrawerOpen,
@@ -900,6 +1081,8 @@ export function useChat(): UseChatReturn {
     setPlotSelectedFloat,
     filters,
     setFilters,
+    updateFilters,
+    clearAll,
     filteredMapData,
     availableFilterOptions,
     floatCount: totalFloatCount,

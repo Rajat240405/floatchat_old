@@ -501,10 +501,8 @@ def _try_llm_extraction_as_recovery(
 
     # spatial_filter: ACCEPTABLE for gazetteer resolution (geographic inference)
     if spec.spatial_filter:
-        # Check if it's a known IO leaf or the indian_ocean alias
-        from floatchat.metadata_service.region_model import all_recognisable_io_names
-
-        known_regions = set(all_recognisable_io_names())
+        # Check if it's a known region
+        known_regions = {"arabian_sea", "bay_of_bengal", "indian_ocean"}
         sf = spec.spatial_filter.lower().replace(" ", "_").replace("-", "_")
         if sf in known_regions:
             updates["region"] = sf
@@ -1212,12 +1210,18 @@ def get_float_registry_endpoint():
                 if status not in ("active", "inactive", "drifted", "unknown"):
                     status = "unknown"
                 institution = str(r.get("institution", "") or "")
+                pc = r.get("profile_count")
+                try:
+                    profile_count = int(pc) if pd.notna(pc) else None
+                except (TypeError, ValueError):
+                    profile_count = None
                 fr_map[fid] = {
                     "status": status,
                     "sensors": sensors,
                     "institution": institution,
                     "network": network,
                     "region_tag": region_tag,
+                    "profile_count": profile_count,
                     "last_report_date": (
                         str(r.get("last_report_date"))[:10]
                         if pd.notna(r.get("last_report_date"))
@@ -1264,6 +1268,7 @@ def get_float_registry_endpoint():
                 "wmo_id": fid,
                 "profiler_type": fr.get("profiler_type"),
                 "manufacturer": fr.get("manufacturer"),
+                "profile_count": fr.get("profile_count"),
             })
 
         for m in map_data:
@@ -1704,6 +1709,227 @@ def get_float_latest_profile(float_id: str):
         msg = msg[:-1]
     if msg.endswith("\n\n"):
         msg = msg.rstrip()
+
+    return FloatProfileAPIResponse(
+        float_id=clean,
+        intent=response.intent,
+        message=msg,
+        figure=response.figure,
+        figures=response.figures,
+        data_summary=response.data_summary or {},
+        map_data=[
+            m.model_dump() if hasattr(m, "model_dump") else m
+            for m in (response.map_data or [])
+        ],
+    )
+
+
+# ================================================
+# Deterministic scientific plots catalogue + render
+# No LLM. No chat.
+# ================================================
+
+_VAR_TITLES = {
+    "TEMP": "Temperature",
+    "PSAL": "Salinity",
+    "DOXY": "Oxygen",
+    "CHLA": "Chlorophyll",
+    "NITRATE": "Nitrate",
+    "BBP700": "Backscatter 700 nm",
+    "PH_IN_SITU_TOTAL": "pH",
+    "DOWNWELLING_PAR": "Downwelling PAR",
+    "PRES": "Pressure",
+}
+
+_CORE_PLOT_VARS = ("TEMP", "PSAL", "DOXY", "CHLA", "NITRATE", "BBP700", "PH_IN_SITU_TOTAL")
+
+
+class AvailablePlotItem(BaseModel):
+    variable: str
+    title: str
+    profiles: int = 0
+
+
+class FloatAvailablePlotsResponse(BaseModel):
+    float_id: str
+    plots: list[AvailablePlotItem] = Field(default_factory=list)
+
+
+def _normalize_float_id(float_id: str) -> str:
+    clean = str(float_id).strip()
+    try:
+        if clean.endswith(".0") and float(clean) == int(float(clean)):
+            clean = str(int(float(clean)))
+    except (TypeError, ValueError):
+        pass
+    return clean
+
+
+def _count_profiles_with_variable(lake, float_id: str, var: str) -> int:
+    """Count distinct cycles with valid measurements for *var* in the levels lake."""
+    import pandas as pd
+
+    var_u = var.upper()
+    col_map = {
+        "TEMP": ("temp_adjusted", "temp"),
+        "PSAL": ("psal_adjusted", "psal"),
+        "DOXY": ("doxy_adjusted", "doxy"),
+        "CHLA": ("chla_adjusted", "chla"),
+    }
+    # Prefer levels parquet for TEMP/PSAL/DOXY/CHLA
+    if var_u in col_map and lake is not None:
+        try:
+            levels_path = None
+            if lake._phase2_root and (lake._phase2_root / "parquet" / "levels").exists():
+                levels_path = (lake._phase2_root / "parquet" / "levels" / "**" / "*.parquet").as_posix()
+            elif getattr(lake, "_lake_root", None) and lake._lake_root.exists():
+                levels_path = (lake._lake_root / "**" / "*.parquet").as_posix()
+            if levels_path:
+                adj, raw = col_map[var_u]
+                conn = lake._get_connection()
+                sql = f"""
+                SELECT COUNT(DISTINCT cycle_number) AS n
+                FROM read_parquet('{levels_path}', hive_partitioning=true)
+                WHERE regexp_replace(CAST(float_id AS VARCHAR), '\\.0$', '') = ?
+                  AND (
+                    ({adj} IS NOT NULL AND NOT isnan({adj}))
+                    OR ({raw} IS NOT NULL AND NOT isnan({raw}))
+                  )
+                """
+                row = conn.execute(sql, [float_id]).fetchone()
+                n = int(row[0]) if row and row[0] is not None else 0
+                if n > 0:
+                    return n
+        except Exception as exc:
+            logger.debug("levels variable count failed for %s/%s: %s", float_id, var_u, exc)
+
+    # Fallback: profile_index.available_variables token match
+    try:
+        if lake is not None and hasattr(lake, "get_profile_index"):
+            pi = lake.get_profile_index(float_id=float_id, limit=50000)
+            if pi is not None and not pi.empty and "available_variables" in pi.columns:
+                count = 0
+                for _, r in pi.iterrows():
+                    av = str(r.get("available_variables") or "").upper().split()
+                    if var_u in av or any(var_u in tok for tok in av):
+                        count += 1
+                return count
+    except Exception as exc:
+        logger.debug("profile_index variable count failed for %s/%s: %s", float_id, var_u, exc)
+    return 0
+
+
+@router.get("/floats/{float_id}/available-plots", response_model=FloatAvailablePlotsResponse)
+def get_float_available_plots(float_id: str):
+    """List scientific variables available for a float. Deterministic. No LLM."""
+    clean = _normalize_float_id(float_id)
+    plots: list[AvailablePlotItem] = []
+    try:
+        lake = _get_lake()
+    except Exception as exc:
+        logger.exception("available-plots: lake init failed: %s", exc)
+        return FloatAvailablePlotsResponse(float_id=clean, plots=[])
+    if lake is None:
+        return FloatAvailablePlotsResponse(float_id=clean, plots=[])
+
+    # Discover candidate variables from registry sensors + profile_index tokens + levels
+    candidates: list[str] = []
+    try:
+        info = lake.query_metadata_lookup(clean) if lake else {}
+        sensors = info.get("sensors") or []
+        sensor_blob = " ".join(str(s).upper() for s in sensors)
+        # Map sensors → Argo vars
+        if any(k in sensor_blob for k in ("CTD", "TEMP", "PSAL")) or not sensors:
+            candidates.extend(["TEMP", "PSAL"])
+        if any(k in sensor_blob for k in ("OPTODE", "DOXY", "OXYGEN")):
+            candidates.append("DOXY")
+        if any(k in sensor_blob for k in ("FLUOROMETER", "CHLA", "CHLOROPHYLL")):
+            candidates.append("CHLA")
+        if any(k in sensor_blob for k in ("NITRATE", "SUNA", "ISUS")):
+            candidates.append("NITRATE")
+        if any(k in sensor_blob for k in ("BBP", "BACKSCATTER")):
+            candidates.append("BBP700")
+        if any(k in sensor_blob for k in ("PH",)):
+            candidates.append("PH_IN_SITU_TOTAL")
+    except Exception:
+        pass
+
+    # Always probe core lake vars
+    for v in _CORE_PLOT_VARS:
+        if v not in candidates:
+            candidates.append(v)
+
+    seen: set[str] = set()
+    for var in candidates:
+        if var in seen:
+            continue
+        seen.add(var)
+        n = _count_profiles_with_variable(lake, clean, var)
+        if n > 0:
+            plots.append(
+                AvailablePlotItem(
+                    variable=var,
+                    title=_VAR_TITLES.get(var, var),
+                    profiles=n,
+                )
+            )
+
+    # Stable scientific order
+    order = {v: i for i, v in enumerate(_CORE_PLOT_VARS)}
+    plots.sort(key=lambda p: order.get(p.variable, 100))
+
+    return FloatAvailablePlotsResponse(float_id=clean, plots=plots)
+
+
+@router.get("/floats/{float_id}/plot", response_model=FloatProfileAPIResponse)
+def get_float_plot(float_id: str, variable: str = "TEMP"):
+    """Render a deterministic profile plot for one variable. No LLM. No chat."""
+    from floatchat.models import ParsedIntent
+    from floatchat.query_engine.engine import QueryEngine
+    from floatchat.visualization_engine.profile import ProfileVisualizationEngine
+    from floatchat.metadata_service.gdac import GDACMetadataService
+    from floatchat.repository_service.gdac_http import GDACRepositoryService
+    from floatchat.netcdf_reader.bgc_reader import BGCNetCDFReader
+    from floatchat.config import settings
+
+    clean = _normalize_float_id(float_id)
+    var = str(variable or "TEMP").strip().upper()
+    if not var:
+        var = "TEMP"
+
+    intent = ParsedIntent(
+        intent="profile_plot",
+        float_id=clean,
+        variables=[var],
+        limit=5,  # a few recent profiles for a readable multi-cycle overlay
+    )
+
+    prev_flag = getattr(settings, "sci_narrator_enabled", True)
+    settings.sci_narrator_enabled = False
+    try:
+        engine = QueryEngine(
+            GDACMetadataService(),
+            GDACRepositoryService(),
+            BGCNetCDFReader(),
+            ProfileVisualizationEngine(),
+        )
+
+        class _SilentExplainer:
+            def generate_explanation(self, *a, **k):
+                return ""
+
+            def _narration_is_enabled(self):
+                return False
+
+        engine.explanation_engine = _SilentExplainer()  # type: ignore[assignment]
+        response = engine.execute(intent)
+    finally:
+        settings.sci_narrator_enabled = prev_flag
+
+    title = _VAR_TITLES.get(var, var)
+    msg = response.message or f"{title} profile for float {clean}."
+    while msg.endswith("\n"):
+        msg = msg[:-1]
 
     return FloatProfileAPIResponse(
         float_id=clean,

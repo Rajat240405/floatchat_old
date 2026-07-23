@@ -195,6 +195,14 @@ export function MapPanel({
         const isSelectedFloat =
           !isTrajectoryMode &&
           (d.float_id === selectedFloat || !!d.selected);
+        const pcRaw = (d as { profile_count?: number | null }).profile_count;
+        const pc =
+          typeof pcRaw === "number" && isFinite(pcRaw) ? Math.max(0, pcRaw) : 0;
+        // Continuous radius from profile_count: ~5px (few) → ~14px (100+).
+        const sizeFromCount = Math.min(
+          14,
+          Math.max(5, 4.5 + Math.sqrt(Math.max(pc, 1)) * 0.95)
+        );
         return {
           type: "Feature" as const,
           geometry: {
@@ -204,6 +212,8 @@ export function MapPanel({
           properties: {
             float_id: d.float_id,
             profile_number: cycle,
+            profile_count: pc,
+            marker_size: isTrajectoryMode ? 6 : sizeFromCount,
             status: d.status || "unknown",
             dac: d.dac || "",
             profile_date: d.profile_date || "",
@@ -211,11 +221,11 @@ export function MapPanel({
             hovered:
               hoveredKey === d.float_id ||
               hoveredKey === `${d.float_id}:${cycle}`,
+            // Exploration: dim every non-selected float when one is selected
             dimmed:
+              !isTrajectoryMode &&
               !!selectedFloat &&
-              d.float_id !== selectedFloat &&
-              !d.selected &&
-              !isTrajectoryMode,
+              d.float_id !== selectedFloat,
             is_trajectory_point: isTrajectoryMode,
           },
         };
@@ -292,14 +302,18 @@ export function MapPanel({
     type: "circle" as const,
     filter: ["==", ["get", "selected"], true] as any,
     paint: {
-      "circle-radius": 16,
+      "circle-radius": [
+        "+",
+        ["coalesce", ["get", "marker_size"], 7],
+        6,
+      ] as any,
       "circle-color": "transparent",
       "circle-stroke-width": 3,
       "circle-stroke-color": "#38bdf8",
     },
   };
 
-  // Status colors come from registry metadata on each marker (active/inactive/drifted)
+  // Status colors from registry; radius from profile_count (marker_size).
   const markerLayer = {
     id: "float-markers",
     type: "circle" as const,
@@ -307,12 +321,10 @@ export function MapPanel({
       "circle-radius": [
         "case",
         ["==", ["get", "selected"], true],
-        11,
+        ["+", ["coalesce", ["get", "marker_size"], 7], 2.5],
         ["==", ["get", "hovered"], true],
-        9,
-        ["==", ["get", "is_trajectory_point"], true],
-        6,
-        7,
+        ["+", ["coalesce", ["get", "marker_size"], 7], 1.5],
+        ["coalesce", ["get", "marker_size"], 7],
       ] as any,
       "circle-color": [
         "case",
@@ -327,21 +339,25 @@ export function MapPanel({
           "#ffa01e",
           "inactive",
           "#ff5050",
-          "#94a3b8", // unknown
+          "#94a3b8",
         ],
       ] as any,
       "circle-stroke-width": [
         "case",
         ["==", ["get", "selected"], true],
         2.5,
+        ["==", ["get", "dimmed"], true],
+        1,
         1.5,
       ] as any,
       "circle-stroke-color": "#ffffff",
       "circle-opacity": [
         "case",
         ["==", ["get", "dimmed"], true],
-        0.45,
+        0.28,
+        ["==", ["get", "selected"], true],
         1,
+        0.92,
       ] as any,
     },
   };
@@ -433,10 +449,12 @@ export function MapPanel({
         <Globe className="w-4 h-4 text-ocean-400" />
         <span className="text-xs font-semibold text-slate-100 tracking-tight">
           {isTrajectoryMode
-            ? "Trajectory"
-            : focusMode
-              ? "Float Focus"
-              : "India Region Dashboard"}
+            ? "Analysis · Trajectory"
+            : selectedFloat
+              ? "Exploration · Float selected"
+              : focusMode
+                ? "Exploration"
+                : "India Region Dashboard"}
         </span>
         {markerCount > 0 && (
           <span className="ml-1.5 text-[11px] px-2 py-0.5 rounded-md bg-ocean-500/15 text-ocean-300 font-semibold border border-ocean-500/30">

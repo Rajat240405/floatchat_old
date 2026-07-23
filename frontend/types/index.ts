@@ -18,6 +18,8 @@ export interface MapData {
   wmo_id?: string | null;
   /** India-region tag from registry/profile_index (arabian_sea | bay_of_bengal | indian_ocean). */
   region_tag?: string | null;
+  /** Number of profiles/cycles for this float (from float_registry). Drives marker size. */
+  profile_count?: number | null;
 }
 
 export interface FloatRegistryInfo {

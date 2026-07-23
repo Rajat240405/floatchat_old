@@ -18,6 +18,7 @@ import {
 import { FloatRegistryInfo } from "@/types";
 import { formatDate, formatLat, formatLon } from "@/lib/utils";
 import { useState } from "react";
+import type { AvailablePlotItem } from "@/services/api";
 
 interface MetadataInspectorProps {
   info: FloatRegistryInfo;
@@ -25,6 +26,9 @@ interface MetadataInspectorProps {
   onViewLatestProfile: () => void;
   onDownloadMetadata: () => void;
   isLoading?: boolean;
+  availablePlots?: AvailablePlotItem[];
+  isLoadingAvailablePlots?: boolean;
+  onSelectPlot?: (variable: string) => void;
 }
 
 /** Display value or a consistent "Not Available" placeholder. */
@@ -41,18 +45,32 @@ function displayValue(v: unknown, opts?: { treatUnknown?: boolean }): string {
   return s;
 }
 
+const PLOT_EMOJI: Record<string, string> = {
+  TEMP: "🌡",
+  PSAL: "🧂",
+  DOXY: "🫧",
+  CHLA: "🌿",
+  NITRATE: "🧪",
+  BBP700: "✨",
+  PH_IN_SITU_TOTAL: "⚗️",
+};
+
 export function MetadataInspector({
   info,
   onViewTrajectory,
   onViewLatestProfile,
   onDownloadMetadata,
   isLoading = false,
+  availablePlots = [],
+  isLoadingAvailablePlots = false,
+  onSelectPlot,
 }: MetadataInspectorProps) {
   const [showAllSensors, setShowAllSensors] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     platform: true,
     position: true,
     sensors: true,
+    plots: true,
     status: true,
     actions: true,
   });
@@ -286,6 +304,53 @@ export function MetadataInspector({
           )}
         </CollapsibleSection>
 
+        {/* Available Scientific Plots — deterministic catalogue */}
+        <CollapsibleSection
+          title="Available Scientific Plots"
+          icon={<Layers className="w-3.5 h-3.5" />}
+          isOpen={expandedSections.plots}
+          onToggle={() => toggleSection("plots")}
+          badge={
+            availablePlots.length > 0
+              ? String(availablePlots.length)
+              : undefined
+          }
+        >
+          {isLoadingAvailablePlots ? (
+            <div className="flex items-center gap-2 fc-meta text-slate-500 py-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Detecting available measurements…
+            </div>
+          ) : availablePlots.length === 0 ? (
+            <p className="fc-meta">No plottable variables found for this float.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-2">
+              {availablePlots.map((plot) => (
+                <button
+                  key={plot.variable}
+                  type="button"
+                  onClick={() => onSelectPlot?.(plot.variable)}
+                  disabled={isLoading}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-white hover:bg-ocean-50 border border-slate-200 hover:border-ocean-300 text-left transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="text-base leading-none" aria-hidden>
+                      {PLOT_EMOJI[plot.variable] || "📊"}
+                    </span>
+                    <span className="fc-value text-slate-800 truncate">
+                      {plot.title}
+                    </span>
+                  </span>
+                  <span className="fc-meta shrink-0 tabular-nums">
+                    {plot.profiles.toLocaleString()} profile
+                    {plot.profiles === 1 ? "" : "s"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </CollapsibleSection>
+
         {/* Status / Battery */}
         <CollapsibleSection
           title="Status"
@@ -294,6 +359,12 @@ export function MetadataInspector({
           onToggle={() => toggleSection("status")}
         >
           <div className="space-y-2">
+            <p className="fc-meta leading-snug bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+              Status from registry: <span className="font-semibold capitalize">{status}</span>.
+              {" "}Active = last report (in-region or global) within 365 days;
+              Drifted = reporting globally but not in-region recently;
+              Inactive = no reports for 365+ days.
+            </p>
             <div className="flex items-center justify-between">
               <span className="fc-label flex items-center gap-1.5">
                 <Battery className="w-3.5 h-3.5 text-amber-500" />

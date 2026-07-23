@@ -113,6 +113,43 @@ export async function getFloatLatestProfile(floatId: string): Promise<{
   return data;
 }
 
+export interface AvailablePlotItem {
+  variable: string;
+  title: string;
+  profiles: number;
+}
+
+/** GET /api/v1/floats/{id}/available-plots — catalogue only, no LLM */
+export async function getFloatAvailablePlots(floatId: string): Promise<{
+  float_id: string;
+  plots: AvailablePlotItem[];
+}> {
+  const { data } = await api.get(
+    `/api/v1/floats/${encodeURIComponent(floatId)}/available-plots`
+  );
+  return data;
+}
+
+/** GET /api/v1/floats/{id}/plot?variable=TEMP — deterministic plot, no LLM */
+export async function getFloatVariablePlot(
+  floatId: string,
+  variable: string
+): Promise<{
+  float_id: string;
+  intent: string;
+  message: string;
+  figure: PlotlyFigure | null;
+  figures: PlotlyFigure[] | null;
+  data_summary: DataSummary;
+  map_data: MapData[];
+}> {
+  const { data } = await api.get(
+    `/api/v1/floats/${encodeURIComponent(floatId)}/plot`,
+    { params: { variable } }
+  );
+  return data;
+}
+
 export function getErrorMessage(error: unknown): string {
   if (error instanceof AxiosError) {
     if (error.response?.data?.message) {

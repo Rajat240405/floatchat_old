@@ -74,26 +74,16 @@ export function applyFilters(markers: MapData[], filters: FilterState): MapData[
   const toKey = filters.dateTo || null;
 
   return markers.filter((m) => {
-    // Region via region_tag
+    // Region via region_tag — exclusive match (registry tags do not overlap).
+    // indian_ocean means ONLY open-basin floats, NOT AS + BoB + IO.
     if (filters.region) {
       const tag = (m.region_tag || "").toLowerCase();
       const want = filters.region.toLowerCase();
-      // indian_ocean is a query alias for all IO leaf tags (+ legacy stored tag).
-      if (want === "indian_ocean") {
-        const ioLeaves = new Set([
-          "arabian_sea",
-          "bay_of_bengal",
-          "equatorial_indian_ocean",
-          "southern_indian_ocean",
-          "indian_ocean", // legacy stored open-basin tag
-        ]);
-        if (tag && !ioLeaves.has(tag)) return false;
-        // empty tag: keep (incomplete marker metadata)
-      } else if (tag) {
-        if (tag !== want) return false;
-      } else {
+      if (!tag) {
+        // No region_tag on marker → cannot confirm membership
         return false;
       }
+      if (tag !== want) return false;
     }
     if (has(filters.networks)) {
       const net = (m.network || "Core Argo").toLowerCase();

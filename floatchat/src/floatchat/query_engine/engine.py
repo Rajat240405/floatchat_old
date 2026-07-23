@@ -21,11 +21,6 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 from floatchat.config import settings
-from floatchat.metadata_service.region_model import (
-    IO_LEAF_REGION_SET,
-    INDIAN_OCEAN_ALIAS,
-    is_io_region,
-)
 from floatchat.exceptions import FloatChatError
 from floatchat.metadata_service.base import AbstractMetadataService
 from floatchat.models import ChatResponse, MapData, ParsedIntent, SearchCriteria
@@ -297,9 +292,7 @@ class QueryEngine:
         """
         pipeline_t0 = time.perf_counter()
 
-        # --- Deployment gate --- #
-        # INDIA_ONLY: Arabian Sea + Bay of Bengal only (legacy product mode).
-        # Otherwise allow all IO leaves + the indian_ocean alias (union).
+        # --- Phase 26: India-only Deployment Gate --- #
         if settings.deployment_mode == "INDIA_ONLY":
             supported_india_regions = {"arabian_sea", "bay_of_bengal"}
             if intent.region and intent.region not in supported_india_regions:
@@ -1199,7 +1192,7 @@ class QueryEngine:
         criteria = LakeQueryCriteria(
             region=(
                 intent.region
-                if intent.region and is_io_region(intent.region)
+                if intent.region in ("arabian_sea", "bay_of_bengal")
                 else None
             ),
             lat_min=lat_min,

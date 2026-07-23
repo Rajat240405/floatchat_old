@@ -50,6 +50,9 @@ export default function HomePage() {
     trajectoryVisible,
     showTrajectory,
     loadLatestProfile,
+    availablePlots,
+    isLoadingAvailablePlots,
+    loadVariablePlot,
     plotItems,
     plotDrawerOpen,
     setPlotDrawerOpen,
@@ -59,6 +62,8 @@ export default function HomePage() {
     setPlotSelectedFloat,
     filters,
     setFilters,
+    updateFilters,
+    clearAll,
     filteredMapData,
     availableFilterOptions,
     floatCount,
@@ -197,6 +202,9 @@ export default function HomePage() {
           onViewLatestProfile={handleViewLatestProfile}
           onDownloadMetadata={handleDownloadMetadata}
           isLoading={isLoadingMetadata || isLoadingCycles}
+          availablePlots={availablePlots}
+          isLoadingAvailablePlots={isLoadingAvailablePlots}
+          onSelectPlot={(variable) => loadVariablePlot(variable)}
         />
       );
     }
@@ -223,12 +231,16 @@ export default function HomePage() {
     handleDownloadMetadata,
     isLoadingMetadata,
     isLoadingCycles,
+    availablePlots,
+    isLoadingAvailablePlots,
+    loadVariablePlot,
   ]);
 
   const sidebar = (
     <SidebarFilters
       filters={filters}
-      onFiltersChange={setFilters}
+      onFiltersChange={updateFilters}
+      onClearAll={clearAll}
       availableOptions={availableFilterOptions}
       floatCount={floatCount}
       floatSearch={floatSearch}

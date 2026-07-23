@@ -61,23 +61,10 @@ _BOUNDS: dict[str, _Bounds] = {
         "lon_max": -70.0,
     },
     "indian_ocean": {
-        # Query-alias coarse pre-filter (union of IO leaves). Not a stored tag.
         "lat_min": -50.0,
         "lat_max": 30.0,
         "lon_min": 20.0,
-        "lon_max": 120.0,
-    },
-    "equatorial_indian_ocean": {
-        "lat_min": -10.0,
-        "lat_max": 30.0,
-        "lon_min": 20.0,
-        "lon_max": 120.0,
-    },
-    "southern_indian_ocean": {
-        "lat_min": -50.0,
-        "lat_max": -10.0,
-        "lon_min": 20.0,
-        "lon_max": 120.0,
+        "lon_max": 150.0,
     },
     "southern_ocean": {
         "lat_min": -80.0,
@@ -138,17 +125,3 @@ __all__ = [
     "resolve_region",
     "REGION_POLYGONS",
 ]
-
-
-def __getattr__(name: str):
-    """Lazy re-exports from region_model (avoids import cycles at package load)."""
-    if name in {
-        "IO_LEAF_REGIONS",
-        "INDIAN_OCEAN_ALIAS",
-        "classify_region",
-        "expand_region_filter",
-    }:
-        from floatchat.metadata_service import region_model as _rm
-
-        return getattr(_rm, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

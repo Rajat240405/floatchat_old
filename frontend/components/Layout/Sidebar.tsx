@@ -19,6 +19,8 @@ import { cn, hasActiveFilters } from "@/lib/utils";
 interface SidebarFiltersProps {
   filters: FilterState;
   onFiltersChange: (f: FilterState) => void;
+  /** Full application reset (filters + selection + panels). */
+  onClearAll?: () => void;
   availableOptions: {
     networks: string[];
     dacs: string[];
@@ -36,6 +38,7 @@ interface SidebarFiltersProps {
 export function SidebarFilters({
   filters,
   onFiltersChange,
+  onClearAll,
   availableOptions,
   floatCount,
   floatSearch,
@@ -62,7 +65,8 @@ export function SidebarFilters({
   };
 
   const clearFilters = () => {
-    onFiltersChange(EMPTY_FILTERS);
+    if (onClearAll) onClearAll();
+    else onFiltersChange(EMPTY_FILTERS);
   };
 
   return (
@@ -156,9 +160,7 @@ export function SidebarFilters({
               [
                 { id: "arabian_sea", label: "Arabian Sea" },
                 { id: "bay_of_bengal", label: "Bay of Bengal" },
-                { id: "equatorial_indian_ocean", label: "Equatorial Indian Ocean" },
-                { id: "southern_indian_ocean", label: "Southern Indian Ocean" },
-                { id: "indian_ocean", label: "Indian Ocean (all)" },
+                { id: "indian_ocean", label: "Indian Ocean" },
                 { id: "", label: "All Regions" },
               ] as const
             ).map((r) => (
