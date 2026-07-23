@@ -43,6 +43,10 @@ _LAKE_VARIABLES: dict[str, tuple[str, str, str]] = {
     "PSAL": ("psal_adjusted", "psal", "psu"),
     "DOXY": ("doxy_adjusted", "doxy", "umol/kg"),
     "CHLA": ("chla_adjusted", "chla", "mg/m^3"),
+    "BBP700": ("bbp700_adjusted", "bbp700", "1/m"),
+    "NITRATE": ("nitrate_adjusted", "nitrate", "umol/kg"),
+    "PH_IN_SITU_TOTAL": ("ph_in_situ_total_adjusted", "ph_in_situ_total", "total_scale"),
+    "DOWNWELLING_PAR": ("downwelling_par_adjusted", "downwelling_par", "umol photons/m^2/s"),
 }
 
 
@@ -519,6 +523,18 @@ class DuckDBDataLake(AbstractDataLake):
             "    f.chla,\n"
             "    f.chla_qc,\n"
             "    f.chla_adjusted,\n"
+            "    f.bbp700,\n"
+            "    f.bbp700_qc,\n"
+            "    f.bbp700_adjusted,\n"
+            "    f.nitrate,\n"
+            "    f.nitrate_qc,\n"
+            "    f.nitrate_adjusted,\n"
+            "    f.ph_in_situ_total,\n"
+            "    f.ph_in_situ_total_qc,\n"
+            "    f.ph_in_situ_total_adjusted,\n"
+            "    f.downwelling_par,\n"
+            "    f.downwelling_par_qc,\n"
+            "    f.downwelling_par_adjusted,\n"
             "    f.region_tag,\n"
             "    f.source_file,\n"
             "    f.dac\n"

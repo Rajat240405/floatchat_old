@@ -248,7 +248,7 @@ export function CycleHistory({
                 >
                   <td className="px-3 py-2">
                     <span
-                      className={`font-bold ${
+                      className={`fc-table font-bold ${
                         isHighlighted ? "text-ocean-600" : "text-slate-700"
                       }`}
                     >
@@ -256,7 +256,7 @@ export function CycleHistory({
                     </span>
                   </td>
                   <td className="px-3 py-2">
-                    <span className="text-slate-700 font-medium">
+                    <span className="fc-table text-slate-700 font-semibold">
                       {formatDate(cycle.date)}
                     </span>
                   </td>
@@ -264,7 +264,7 @@ export function CycleHistory({
                     {cycle.hasPosition !== false &&
                     cycle.latitude != null &&
                     cycle.longitude != null ? (
-                      <div className="flex items-center gap-2 text-slate-600 font-mono text-[11px]">
+                      <div className="flex items-center gap-2 fc-table text-slate-600 font-mono">
                         <span>{formatLat(cycle.latitude)}</span>
                         <span>{formatLon(cycle.longitude)}</span>
                       </div>
@@ -273,19 +273,19 @@ export function CycleHistory({
                     )}
                   </td>
                   {hasDepth && (
-                    <td className="px-3 py-2 text-slate-700 font-medium tabular-nums">
+                    <td className="px-3 py-2 fc-table text-slate-700 font-semibold tabular-nums">
                       {cycle.maxDepth != null
                         ? Math.round(cycle.maxDepth)
                         : "—"}
                     </td>
                   )}
                   {hasTemp && (
-                    <td className="px-3 py-2 text-slate-700 font-medium tabular-nums">
+                    <td className="px-3 py-2 fc-table text-slate-700 font-semibold tabular-nums">
                       {cycle.temp != null ? cycle.temp.toFixed(2) : "—"}
                     </td>
                   )}
                   {hasSalinity && (
-                    <td className="px-3 py-2 text-slate-700 font-medium tabular-nums">
+                    <td className="px-3 py-2 fc-table text-slate-700 font-semibold tabular-nums">
                       {cycle.salinity != null
                         ? cycle.salinity.toFixed(2)
                         : "—"}

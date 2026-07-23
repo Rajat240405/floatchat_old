@@ -1748,7 +1748,7 @@ _VAR_TITLES = {
     "PRES": "Pressure",
 }
 
-_CORE_PLOT_VARS = ("TEMP", "PSAL", "DOXY", "CHLA", "NITRATE", "BBP700", "PH_IN_SITU_TOTAL")
+_CORE_PLOT_VARS = ("TEMP", "PSAL", "DOXY", "CHLA", "NITRATE", "BBP700", "PH_IN_SITU_TOTAL", "DOWNWELLING_PAR")
 
 
 class AvailablePlotItem(BaseModel):
@@ -1782,6 +1782,10 @@ def _count_profiles_with_variable(lake, float_id: str, var: str) -> int:
         "PSAL": ("psal_adjusted", "psal"),
         "DOXY": ("doxy_adjusted", "doxy"),
         "CHLA": ("chla_adjusted", "chla"),
+        "BBP700": ("bbp700_adjusted", "bbp700"),
+        "NITRATE": ("nitrate_adjusted", "nitrate"),
+        "PH_IN_SITU_TOTAL": ("ph_in_situ_total_adjusted", "ph_in_situ_total"),
+        "DOWNWELLING_PAR": ("downwelling_par_adjusted", "downwelling_par"),
     }
     # Prefer levels parquet for TEMP/PSAL/DOXY/CHLA
     if var_u in col_map and lake is not None:

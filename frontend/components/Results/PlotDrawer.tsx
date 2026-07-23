@@ -10,7 +10,6 @@ import {
   Pin,
   PinOff,
   BarChart3,
-  Layers,
 } from "lucide-react";
 import { PlotItem, PlotlyFigure } from "@/types";
 
@@ -219,56 +218,6 @@ export function PlotDrawer({
                 <X className="w-4 h-4" />
               </button>
             </div>
-
-            {/* Float selector — default multi-float workflow */}
-            {showFloatSelector && (
-              <div className="px-4 py-3 border-b border-slate-200 bg-white flex-shrink-0">
-                <div className="flex items-center gap-2 mb-2">
-                  <Layers className="w-3.5 h-3.5 text-ocean-500" />
-                  <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
-                    Float selection
-                  </span>
-                </div>
-                <div className="flex flex-col gap-1 max-h-40 overflow-y-auto scrollbar-thin pr-1">
-                  <label className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors">
-                    <input
-                      type="radio"
-                      name="plot-float"
-                      checked={selectedFloatId == null}
-                      onChange={() => onSelectFloatId?.(null)}
-                      className="w-3.5 h-3.5 accent-ocean-500"
-                    />
-                    <span className="text-xs font-semibold text-slate-700">
-                      All Floats
-                    </span>
-                    <span className="ml-auto text-[10px] text-slate-400">
-                      overlay · {floatIds.length}
-                    </span>
-                  </label>
-                  {floatIds.map((fid) => (
-                    <label
-                      key={fid}
-                      className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${
-                        selectedFloatId === fid
-                          ? "bg-ocean-50 border border-ocean-200"
-                          : "hover:bg-slate-50 border border-transparent"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="plot-float"
-                        checked={selectedFloatId === fid}
-                        onChange={() => onSelectFloatId?.(fid)}
-                        className="w-3.5 h-3.5 accent-ocean-500"
-                      />
-                      <span className="text-xs font-medium text-slate-700 font-mono">
-                        Float {fid}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* Single-float badge when only one float in set */}
             {!showFloatSelector && floatIds.length === 1 && (

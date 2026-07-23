@@ -475,7 +475,7 @@ class Phase2DataLakeBuilder:
         }
         # Checkpoint file for resumable parsing
         self._ckpt_path = self.data_lake_dir / ".checkpoint"
-        self._checkpoint_done: set[tuple[str, int]] = set()
+        self._checkpoint_done: set[tuple[str, int, str]] = set()
         self._load_checkpoint()
         # Global last-report dates (from unfiltered index) for status computation
         # Key: float_id, Value: latest profile date ANYWHERE in the world
@@ -489,7 +489,12 @@ class Phase2DataLakeBuilder:
         return self.data_lake_dir / ".checkpoint"
 
     def _load_checkpoint(self) -> None:
-        """Load previously-parsed (float_id, cycle_number) pairs from checkpoint file."""
+        """Load previously-parsed (float_id, cycle_number, dtype) triples from checkpoint file.
+
+        Backward compatible: legacy 2-field lines (``float_id,cycle_number``)
+        are loaded as ``(float_id, cycle_number, "core")`` so existing checkpoint
+        files do not need to be deleted.
+        """
         ckpt = self._checkpoint_path()
         if ckpt.exists():
             with ckpt.open("r") as f:
@@ -500,16 +505,19 @@ class Phase2DataLakeBuilder:
                     parts = line.split(",")
                     if len(parts) >= 2:
                         try:
-                            self._checkpoint_done.add((parts[0], int(parts[1])))
+                            float_id = parts[0]
+                            cycle_number = int(parts[1])
+                            dtype = parts[2] if len(parts) >= 3 else "core"
+                            self._checkpoint_done.add((float_id, cycle_number, dtype))
                         except ValueError:
                             pass
             logger.info("Loaded checkpoint: %d profiles already parsed", len(self._checkpoint_done))
 
-    def _save_checkpoint(self, float_id: str, cycle_number: int) -> None:
+    def _save_checkpoint(self, float_id: str, cycle_number: int, dtype: str) -> None:
         """Record a successfully-parsed profile in the checkpoint file."""
         ckpt = self._checkpoint_path()
         with ckpt.open("a") as f:
-            f.write(f"{float_id},{cycle_number}\n")
+            f.write(f"{float_id},{cycle_number},{dtype}\n")
 
 
     def run(self, max_profiles: int = 0, skip_download: bool = False) -> None:
@@ -816,7 +824,7 @@ class Phase2DataLakeBuilder:
 
             float_id = record["float_id"]
             cycle_number = record["cycle_number"]
-            key = (float_id, cycle_number)
+            key = (float_id, cycle_number, dtype)
             rel_path = record["file"]
 
             # ── Checkpoint: skip if already parsed ── #
@@ -842,7 +850,7 @@ class Phase2DataLakeBuilder:
             if result["levels"].empty:
                 logger.debug("  Empty levels for %s — skipping", rel_path)
                 # Still checkpoint it to avoid re-parsing bad files
-                self._save_checkpoint(float_id, cycle_number)
+                self._save_checkpoint(float_id, cycle_number, dtype)
                 self._checkpoint_done.add(key)
                 continue
 
@@ -869,7 +877,7 @@ class Phase2DataLakeBuilder:
             self.levels_batches.append(result["levels"])
 
             # ── Save checkpoint ── #
-            self._save_checkpoint(float_id, cycle_number)
+            self._save_checkpoint(float_id, cycle_number, dtype)
             self._checkpoint_done.add(key)
             progress.update(1)
 

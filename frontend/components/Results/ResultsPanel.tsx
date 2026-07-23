@@ -6,7 +6,6 @@ import { ChatMessage, MapData } from "@/types";
 import { SummaryCards } from "./SummaryCards";
 import { PlotlyChart } from "./PlotlyChart";
 import { FloatDetailCard } from "./FloatDetailCard";
-import { FloatMetadataCard } from "./FloatMetadataCard";
 import { CountStatCard } from "./CountStatCard";
 
 interface ResultsPanelProps {
@@ -71,10 +70,6 @@ export function ResultsPanel({
             >
               {!isCountIntent && !floatInfo && (
                 <SummaryCards summary={summary} intent={intent} />
-              )}
-
-              {floatInfo && (
-                <FloatMetadataCard info={floatInfo} onDrillDown={onDrillDown} />
               )}
 
               {isCountIntent && summary && (

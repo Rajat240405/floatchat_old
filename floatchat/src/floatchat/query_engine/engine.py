@@ -1282,6 +1282,18 @@ class QueryEngine:
             "chla": "CHLA",
             "chla_qc": "CHLA_QC",
             "chla_adjusted": "CHLA_ADJUSTED",
+            "bbp700": "BBP700",
+            "bbp700_qc": "BBP700_QC",
+            "bbp700_adjusted": "BBP700_ADJUSTED",
+            "nitrate": "NITRATE",
+            "nitrate_qc": "NITRATE_QC",
+            "nitrate_adjusted": "NITRATE_ADJUSTED",
+            "ph_in_situ_total": "PH_IN_SITU_TOTAL",
+            "ph_in_situ_total_qc": "PH_IN_SITU_TOTAL_QC",
+            "ph_in_situ_total_adjusted": "PH_IN_SITU_TOTAL_ADJUSTED",
+            "downwelling_par": "DOWNWELLING_PAR",
+            "downwelling_par_qc": "DOWNWELLING_PAR_QC",
+            "downwelling_par_adjusted": "DOWNWELLING_PAR_ADJUSTED",
         }
         for low, up in col_aliases.items():
             if low in df.columns and up not in df.columns:
