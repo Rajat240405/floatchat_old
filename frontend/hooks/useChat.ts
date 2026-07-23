@@ -13,7 +13,15 @@ import {
   PlotlyFigure,
   EMPTY_FILTERS,
 } from "@/types";
-import { sendChatMessage, getErrorMessage, getInitialRegistry } from "@/services/api";
+import {
+  sendChatMessage,
+  getErrorMessage,
+  getInitialRegistry,
+  getFloatMetadata,
+  getFloatTrajectory,
+  getFloatLatestProfile,
+} from "@/services/api";
+import type { FloatRegistryInfo } from "@/types";
 import { generateId, applyFilters } from "@/lib/utils";
 
 interface UseChatReturn {
@@ -29,8 +37,10 @@ interface UseChatReturn {
   onSelectSuggestion: (query: string) => void;
   selectedFloat: string | null;
   setSelectedFloat: (floatId: string | null) => void;
+  /** Authoritative metadata from GET /floats/{id}/metadata (no LLM). */
+  floatInfo: FloatRegistryInfo | null;
+  isLoadingMetadata: boolean;
 
-  // Redesign: workspace state machine + panels
   currentMapData: MapData[];
   mode: WorkspaceMode;
   chatOpen: boolean;
@@ -41,11 +51,18 @@ interface UseChatReturn {
   isLoadingCycles: boolean;
   highlightCycle: number | null;
   setHighlightCycle: (n: number | null) => void;
+  /** True once the user has explicitly requested trajectory for the focused float. */
+  trajectoryVisible: boolean;
+  showTrajectory: () => Promise<void>;
+  loadLatestProfile: () => Promise<void>;
 
   plotItems: PlotItem[];
   plotDrawerOpen: boolean;
   setPlotDrawerOpen: (open: boolean) => void;
   togglePlotPin: (id: string) => void;
+  plotFloatIds: string[];
+  plotSelectedFloat: string | null;
+  setPlotSelectedFloat: (id: string | null) => void;
 
   filters: FilterState;
   setFilters: (f: FilterState) => void;
@@ -56,13 +73,93 @@ interface UseChatReturn {
     variables: string[];
     statuses: string[];
   };
-  // Reliable count for sidebar "Active Floats" even on initial load
   floatCount: number;
 
   floatSearch: string;
   setFloatSearch: (s: string) => void;
   submitFloatSearch: () => void;
   loadCycleHistory: (floatId: string) => Promise<void>;
+
+  isFloatFocusMode: boolean;
+  clearFloatFocus: () => void;
+}
+
+/** Extract unique float IDs referenced by plotly traces (name like "Float 2903464"). */
+function extractFloatIdsFromFigures(figures: PlotlyFigure[]): string[] {
+  const ids = new Set<string>();
+  for (const fig of figures) {
+    for (const trace of fig.data || []) {
+      const name = String((trace as { name?: string }).name || "");
+      const m = name.match(/Float\s+(\d{5,})/i);
+      if (m) ids.add(m[1]);
+    }
+  }
+  return Array.from(ids).sort();
+}
+
+/** Detect whether a chat response targets a single float. */
+function detectSingleFloatFocus(response: {
+  intent?: string;
+  map_data?: MapData[] | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data_summary?: any;
+  figures?: PlotlyFigure[] | null;
+  figure?: PlotlyFigure | null;
+}): string | null {
+  const summary = (response.data_summary || {}) as {
+    float_info?: { float_id?: string };
+    float_id?: string;
+    unique_floats?: number;
+  };
+  const mapData = response.map_data || [];
+
+  const floatInfo = summary.float_info;
+  if (floatInfo?.float_id) return String(floatInfo.float_id);
+  if (summary.float_id) return String(summary.float_id);
+
+  if (summary.unique_floats === 1 && mapData.length >= 1) {
+    return String(mapData[0].float_id);
+  }
+
+  if (mapData.length > 0) {
+    const unique = new Set(mapData.map((m) => m.float_id).filter(Boolean));
+    if (unique.size === 1) return String([...unique][0]);
+  }
+
+  const figs = response.figures || (response.figure ? [response.figure] : []);
+  if (figs.length > 0) {
+    const ids = extractFloatIdsFromFigures(figs as PlotlyFigure[]);
+    if (ids.length === 1) return ids[0];
+  }
+
+  if (
+    mapData.length === 1 &&
+    ["metadata_lookup", "nearest_float", "trajectory", "profile_plot"].includes(
+      response.intent || ""
+    )
+  ) {
+    return String(mapData[0].float_id);
+  }
+
+  return null;
+}
+
+function markerForFloat(
+  floatId: string,
+  sources: MapData[][]
+): MapData | null {
+  for (const src of sources) {
+    const hit = [...src].reverse().find((m) => m.float_id === floatId);
+    if (
+      hit &&
+      typeof hit.latitude === "number" &&
+      typeof hit.longitude === "number" &&
+      !(hit.latitude === 0 && hit.longitude === 0)
+    ) {
+      return { ...hit, selected: false };
+    }
+  }
+  return null;
 }
 
 export function useChat(): UseChatReturn {
@@ -76,20 +173,31 @@ export function useChat(): UseChatReturn {
   const isNearBottomRef = useRef(true);
   const prevMessageCountRef = useRef(messages.length);
 
-  // Redesign state
   const [mode, setMode] = useState<WorkspaceMode>("chat");
   const [chatOpen, setChatOpenState] = useState(false);
   const [cycleData, setCycleData] = useState<CyclePoint[] | null>(null);
   const [isLoadingCycles, setIsLoadingCycles] = useState(false);
   const [highlightCycle, setHighlightCycle] = useState<number | null>(null);
+  const [trajectoryVisible, setTrajectoryVisible] = useState(false);
+  const [floatInfo, setFloatInfo] = useState<FloatRegistryInfo | null>(null);
+  const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
   const [plotItems, setPlotItems] = useState<PlotItem[]>([]);
   const [plotDrawerOpen, setPlotDrawerOpen] = useState(false);
+  const [plotSelectedFloat, setPlotSelectedFloat] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [floatSearch, setFloatSearch] = useState("");
 
-  // NEW: initial live registry for dashboard (populated on app start)
   const [initialMapData, setInitialMapData] = useState<MapData[]>([]);
-  const [isBootstrapLoading, setIsBootstrapLoading] = useState(true);
+
+  // Focus: show only this float's latest position (no trajectory until requested)
+  const [focusFloatId, setFocusFloatId] = useState<string | null>(null);
+  const [focusMapData, setFocusMapData] = useState<MapData[] | null>(null);
+  // Multi-float query overlay
+  const [queryMapData, setQueryMapData] = useState<MapData[] | null>(null);
+  // Trajectory points (only drawn after explicit View Trajectory)
+  const [trajectoryMapData, setTrajectoryMapData] = useState<MapData[] | null>(
+    null
+  );
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -115,41 +223,134 @@ export function useChat(): UseChatReturn {
     () =>
       [...messages]
         .reverse()
-        .find((m) => m.role === "assistant" && !m.isLoading && m.mapData)?.mapData ?? [],
+        .find((m) => m.role === "assistant" && !m.isLoading && m.mapData)
+        ?.mapData ?? [],
     [messages]
   );
 
-  // Prefer bootstrap live registry for initial dashboard (filters + map) until chat produces data.
-  // This ensures sidebar and map are populated immediately on startup.
-  const currentMapData = useMemo(
-    () => (initialMapData.length > 0 ? initialMapData : chatMapData),
-    [initialMapData, chatMapData]
+  // Map ownership:
+  //  1. Focus + trajectory visible → trajectory points
+  //  2. Focus only → single latest marker
+  //  3. Multi-float query overlay
+  //  4. Full registry
+  const currentMapData = useMemo(() => {
+    if (focusFloatId) {
+      if (trajectoryVisible && trajectoryMapData && trajectoryMapData.length > 0) {
+        return trajectoryMapData;
+      }
+      if (focusMapData && focusMapData.length > 0) return focusMapData;
+    }
+    if (!focusFloatId && queryMapData && queryMapData.length > 0) {
+      return queryMapData;
+    }
+    if (initialMapData.length > 0) return initialMapData;
+    return chatMapData;
+  }, [
+    focusFloatId,
+    focusMapData,
+    trajectoryVisible,
+    trajectoryMapData,
+    queryMapData,
+    chatMapData,
+    initialMapData,
+  ]);
+
+  const isFloatFocusMode = Boolean(focusFloatId);
+
+  /** Fetch trajectory/cycle points via deterministic REST — NO LLM. */
+  const fetchTrajectoryData = useCallback(
+    async (
+      floatId: string
+    ): Promise<{ cycles: CyclePoint[]; points: MapData[] }> => {
+      const response = await getFloatTrajectory(floatId);
+      const mapData = (response.map_data ?? []) as Array<
+        MapData & {
+          max_depth?: number | null;
+          temp?: number | null;
+          salinity?: number | null;
+          has_position?: boolean;
+        }
+      >;
+
+      // Keep ALL cycles returned by the API (do not drop missing coords).
+      // Sort by cycle number when present, else by date.
+      const ordered = [...mapData]
+        .map((m) => ({ ...m, float_id: floatId }))
+        .sort((a, b) => {
+          const ca = a.profile_number;
+          const cb = b.profile_number;
+          if (ca != null && cb != null && ca !== cb) return ca - cb;
+          const da = a.profile_date || "";
+          const db = b.profile_date || "";
+          return da.localeCompare(db);
+        });
+
+      const registryStatus =
+        markerForFloat(floatId, [focusMapData || [], initialMapData])?.status ||
+        ordered.find((m) => m.status && m.status !== "unknown")?.status ||
+        ordered[ordered.length - 1]?.status ||
+        "unknown";
+
+      const cycles: CyclePoint[] = ordered.map((m, idx) => {
+        const hasPos =
+          m.has_position !== false &&
+          typeof m.latitude === "number" &&
+          typeof m.longitude === "number" &&
+          !(m.latitude === 0 && m.longitude === 0);
+        return {
+          cycleNumber: m.profile_number ?? idx + 1,
+          date: m.profile_date,
+          latitude: hasPos ? m.latitude : null,
+          longitude: hasPos ? m.longitude : null,
+          variables: m.variables ?? [],
+          index: idx,
+          // Deployment = lowest cycle number present, not array index 0 after reverse sorts
+          isDeployment: false,
+          isCurrent: false,
+          hasPosition: hasPos,
+          maxDepth: m.max_depth ?? null,
+          temp: m.temp ?? null,
+          salinity: m.salinity ?? null,
+        };
+      });
+      // Mark deployment (min cycle) and current (max cycle)
+      if (cycles.length > 0) {
+        const nums = cycles.map((c) => c.cycleNumber);
+        const minC = Math.min(...nums);
+        const maxC = Math.max(...nums);
+        for (const c of cycles) {
+          c.isDeployment = c.cycleNumber === minC;
+          c.isCurrent = c.cycleNumber === maxC;
+        }
+      }
+
+      // Map points: only those with valid coordinates
+      const points: MapData[] = ordered
+        .filter((m) => {
+          const hasPos =
+            m.has_position !== false &&
+            typeof m.latitude === "number" &&
+            typeof m.longitude === "number" &&
+            !(m.latitude === 0 && m.longitude === 0);
+          return hasPos;
+        })
+        .map((m, idx, arr) => ({
+          ...m,
+          status: registryStatus,
+          selected: idx === arr.length - 1,
+        }));
+      return { cycles, points };
+    },
+    [focusMapData, initialMapData]
   );
 
-  // ── Load cycle history / trajectory on explicit action (defined early for closure) ───────────────────
+  /** Load cycle history table only — deterministic REST, no map draw. */
   const loadCycleHistory = useCallback(
     async (floatId: string) => {
       if (isLoadingCycles) return;
       setIsLoadingCycles(true);
       try {
-        const response = await sendChatMessage(
-          { message: `Show trajectory of float ${floatId}` },
-          sessionIdRef.current
-        );
-        const mapData = response.map_data ?? [];
-        const ordered = (mapData || [])
-          .filter((m: any) => m.float_id === floatId)
-          .sort((a: any, b: any) => (a.profile_number ?? 0) - (b.profile_number ?? 0));
-        const cycles: CyclePoint[] = ordered.map((m: any, idx: number) => ({
-          cycleNumber: m.profile_number ?? idx + 1,
-          date: m.profile_date,
-          latitude: m.latitude,
-          longitude: m.longitude,
-          variables: m.variables ?? [],
-          index: idx,
-          isDeployment: idx === 0,
-          isCurrent: idx === ordered.length - 1,
-        }));
+        const { cycles } = await fetchTrajectoryData(floatId);
         setCycleData(cycles.length > 0 ? cycles : null);
         setHighlightCycle(null);
       } catch {
@@ -158,55 +359,248 @@ export function useChat(): UseChatReturn {
         setIsLoadingCycles(false);
       }
     },
-    [isLoadingCycles]
+    [isLoadingCycles, fetchTrajectoryData]
   );
 
-  // ── Workflow: selecting a float swaps the right column to metadata ───────
-  // Single click: immediately select + show metadata + cycle history (no auto chat)
-  const handleSelectFloat = useCallback(async (floatId: string | null) => {
-    setSelectedFloat(floatId);
-    if (floatId) {
+  /** Explicit View Trajectory — deterministic REST, draw path on map. */
+  const showTrajectory = useCallback(async () => {
+    const floatId = focusFloatId || selectedFloat;
+    if (!floatId || isLoadingCycles) return;
+    setIsLoadingCycles(true);
+    try {
+      const { cycles, points } = await fetchTrajectoryData(floatId);
+      setCycleData(cycles.length > 0 ? cycles : null);
+      if (points.length > 0) {
+        setTrajectoryMapData(points);
+        setTrajectoryVisible(true);
+      }
+      setHighlightCycle(null);
+    } catch {
+      /* keep prior state */
+    } finally {
+      setIsLoadingCycles(false);
+    }
+  }, [focusFloatId, selectedFloat, isLoadingCycles, fetchTrajectoryData]);
+
+  /** Show Latest Profile — deterministic REST, opens plot drawer. No LLM. */
+  const loadLatestProfile = useCallback(async () => {
+    const floatId = focusFloatId || selectedFloat;
+    if (!floatId || isLoading) return;
+    setIsLoading(true);
+    try {
+      const response = await getFloatLatestProfile(floatId);
+      const figures = response.figures ?? (response.figure ? [response.figure] : []);
+      if (figures.length > 0) {
+        setPlotItems(
+          figures.map((f, i) => ({
+            id: `latest-${floatId}-${i}-${f.variable ?? "var"}`,
+            variable: f.variable ?? `var${i + 1}`,
+            title: f.variable ? String(f.variable) : `Plot ${i + 1}`,
+            figure: f,
+            pinned: false,
+          }))
+        );
+        const ids = extractFloatIdsFromFigures(figures);
+        setPlotSelectedFloat(ids.length >= 1 ? ids[0] : floatId);
+        setPlotDrawerOpen(true);
+      }
+    } catch (e) {
+      console.warn("Latest profile failed", e);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [focusFloatId, selectedFloat, isLoading]);
+
+  /** Load authoritative metadata via REST — NO LLM. */
+  const loadFloatMetadata = useCallback(async (floatId: string) => {
+    setIsLoadingMetadata(true);
+    // Clear previous float so the marker stub cannot flash wrong dates
+    setFloatInfo(null);
+    try {
+      const resp = await getFloatMetadata(floatId);
+      const info = resp.float_info || null;
+      // Normalize empty strings so the UI can show "Not Available"
+      if (info) {
+        const blank = (v: unknown) =>
+          v == null || v === "" || v === "unknown" || v === "None" || v === "nan";
+        if (blank(info.platform_type)) info.platform_type = "";
+        if (blank(info.profiler_type)) info.profiler_type = "";
+        if (blank(info.manufacturer)) info.manufacturer = "";
+        if (blank(info.institution)) info.institution = "";
+        if (blank(info.dac)) info.dac = "";
+      }
+      setFloatInfo(info);
+      // Enrich focus marker from metadata position if we only had a stub
+      if (resp.map_data && resp.map_data.length > 0) {
+        setFocusMapData((prev) => {
+          if (prev && prev.length > 0) {
+            const base = prev[prev.length - 1];
+            const m = resp.map_data[0];
+            return [
+              {
+                ...base,
+                ...m,
+                float_id: floatId,
+                selected: true,
+                status: m.status || base.status || "unknown",
+              },
+            ];
+          }
+          return resp.map_data.map((m) => ({ ...m, selected: true }));
+        });
+      }
+    } catch (e) {
+      console.warn("Metadata lookup failed", e);
+      setFloatInfo(null);
+    } finally {
+      setIsLoadingMetadata(false);
+    }
+  }, []);
+
+  /**
+   * Pin a single float on the map (latest position only).
+   * Does NOT open metadata or load cycles — that happens on marker click.
+   */
+  const pinFloatOnMap = useCallback(
+    (floatId: string, markers?: MapData[]) => {
+      setFocusFloatId(floatId);
+      setQueryMapData(null);
+      setTrajectoryVisible(false);
+      setTrajectoryMapData(null);
+      setHighlightCycle(null);
+      // Do not auto-select / open metadata
+      setSelectedFloat(null);
+      setMode("chat");
+      setCycleData(null);
+      setChatOpenState(false);
+
+      const fromMarkers =
+        markers && markers.length > 0
+          ? markers.filter((m) => m.float_id === floatId)
+          : [];
+      const single =
+        markerForFloat(floatId, [fromMarkers, chatMapData, initialMapData]) ||
+        (fromMarkers[0]
+          ? { ...fromMarkers[fromMarkers.length - 1], selected: false }
+          : null);
+
+      if (single) {
+        setFocusMapData([{ ...single, selected: false }]);
+      } else {
+        // Keep a placeholder so focus mode is active; coords may arrive later
+        setFocusMapData([]);
+      }
+    },
+    [chatMapData, initialMapData]
+  );
+
+  /**
+   * User clicked a float marker → open Metadata + load Cycle History table.
+   * Trajectory is NOT drawn until View Trajectory is clicked.
+   */
+  const openFloatInspector = useCallback(
+    async (floatId: string) => {
+      setFocusFloatId(floatId);
+      setSelectedFloat(floatId);
       setMode("metadata");
       setChatOpenState(false);
       setHighlightCycle(null);
-      try {
-        await loadCycleHistory(floatId);
-      } catch {
-        // ignore, CycleHistory will show empty state
-      }
-    } else {
-      setMode("chat");
-      setChatOpenState(false);
-      setCycleData(null);
-    }
-  }, [loadCycleHistory]);
+      setTrajectoryVisible(false);
+      setTrajectoryMapData(null);
+      setQueryMapData(null);
 
-  // Toggling the chat overlay must NOT clear conversation or selection.
+      const single = markerForFloat(floatId, [
+        focusMapData || [],
+        trajectoryMapData || [],
+        queryMapData || [],
+        chatMapData,
+        initialMapData,
+      ]);
+      if (single) {
+        setFocusMapData([{ ...single, selected: true }]);
+      }
+
+      // Deterministic REST — metadata + cycles in parallel, no LLM
+      await Promise.all([
+        loadFloatMetadata(floatId),
+        loadCycleHistory(floatId),
+      ]);
+    },
+    [
+      focusMapData,
+      trajectoryMapData,
+      queryMapData,
+      chatMapData,
+      initialMapData,
+      loadCycleHistory,
+      loadFloatMetadata,
+    ]
+  );
+
+  const clearFloatFocus = useCallback(() => {
+    setFocusFloatId(null);
+    setFocusMapData(null);
+    setQueryMapData(null);
+    setTrajectoryVisible(false);
+    setTrajectoryMapData(null);
+    setSelectedFloat(null);
+    setFloatInfo(null);
+    setMode("chat");
+    setChatOpenState(false);
+    setCycleData(null);
+    setHighlightCycle(null);
+  }, []);
+
+  // Marker click handler
+  const handleSelectFloat = useCallback(
+    async (floatId: string | null) => {
+      if (!floatId) {
+        // Deselect inspector but keep a single-float pin so user can re-click
+        if (selectedFloat && focusFloatId) {
+          setSelectedFloat(null);
+          setFloatInfo(null);
+          setMode("chat");
+          setCycleData(null);
+          setHighlightCycle(null);
+          setTrajectoryVisible(false);
+          setTrajectoryMapData(null);
+          if (focusMapData) {
+            setFocusMapData(
+              focusMapData.map((m) => ({ ...m, selected: false }))
+            );
+          }
+          return;
+        }
+        // Empty-map click with no selection → restore full registry
+        // (natural transition; no floating Dashboard control needed)
+        clearFloatFocus();
+        return;
+      }
+      await openFloatInspector(floatId);
+    },
+    [selectedFloat, focusFloatId, focusMapData, clearFloatFocus, openFloatInspector]
+  );
+
   const setChatOpen = useCallback((open: boolean) => {
     setChatOpenState(open);
   }, []);
 
-  // ── Derive the Current Context for the AI copilot ───────────────────────
   const context: WorkspaceContext = useMemo(() => {
     const sel = selectedFloat
       ? currentMapData.find((m) => m.float_id === selectedFloat)
       : undefined;
-    const lastTrajectory =
-      [...messages]
-        .reverse()
-        .find((m) => m.role === "assistant" && m.intent === "trajectory" && m.mapData)?.mapData ?? [];
-    const cyclePoint = highlightCycle != null
-      ? lastTrajectory.find((m) => m.profile_number === highlightCycle)
-      : undefined;
+    const cyclePoint =
+      highlightCycle != null && cycleData
+        ? cycleData.find((c) => c.cycleNumber === highlightCycle)
+        : undefined;
     return {
       floatId: selectedFloat,
       cycle: highlightCycle,
-      region: sel?.status ? null : null,
+      region: null,
       variables: cyclePoint?.variables ?? sel?.variables ?? [],
     };
-  }, [selectedFloat, currentMapData, messages, highlightCycle]);
+  }, [selectedFloat, currentMapData, highlightCycle, cycleData]);
 
-  // ── Filters: derive options from current markers OR initial bootstrap data ─
   const sourceDataForFilters = useMemo(
     () => (initialMapData.length > 0 ? initialMapData : currentMapData),
     [initialMapData, currentMapData]
@@ -223,7 +617,6 @@ export function useChat(): UseChatReturn {
       for (const v of m.variables || []) vars.add(v.toUpperCase());
       if (m.status) statuses.add(m.status);
     }
-    // Robust fallbacks so UI is never empty on first load
     const result = {
       networks: Array.from(nets).sort(),
       dacs: Array.from(dacs).sort(),
@@ -232,37 +625,31 @@ export function useChat(): UseChatReturn {
     };
     if (result.networks.length === 0) result.networks = ["Core Argo", "BGC Argo"];
     if (result.dacs.length === 0) result.dacs = ["INCOIS", "Coriolis", "AOML"];
-    if (result.variables.length === 0) result.variables = ["TEMP", "PSAL", "DOXY", "CHLA"];
-    if (result.statuses.length === 0) result.statuses = ["active", "inactive"];
+    if (result.variables.length === 0)
+      result.variables = ["TEMP", "PSAL", "DOXY", "CHLA"];
+    if (result.statuses.length === 0)
+      result.statuses = ["active", "inactive", "drifted"];
     return result;
   }, [sourceDataForFilters]);
 
   const filteredMapData = useMemo(() => {
-    const { applyFilters } = require("@/lib/utils") as typeof import("@/lib/utils");
     return applyFilters(currentMapData, filters);
   }, [currentMapData, filters]);
 
-  // Reliable count for "Active Floats" — now reflects filters
-  const totalFloatCount = filteredMapData.length;
+  const totalFloatCount = useMemo(() => {
+    const ids = new Set(filteredMapData.map((m) => m.float_id));
+    return ids.size;
+  }, [filteredMapData]);
 
-  // Bootstrap using the new dedicated registry endpoint (no LLM, no chat).
   const bootstrapInitialRegistry = useCallback(async () => {
-    setIsBootstrapLoading(true);
     try {
-      const resp: any = await getInitialRegistry();  // now calls /api/v1/floats/registry
-      const data = resp.map_data || resp.data || resp || [];
+      const resp = await getInitialRegistry();
+      const data = (resp.map_data || []) as MapData[];
       if (Array.isArray(data) && data.length > 0) {
         setInitialMapData(data);
-      } else if (resp && Array.isArray(resp)) {
-        setInitialMapData(resp);
       }
-
-      // If the endpoint also returned pre-computed filter options, we can use them
-      // (the current availableFilterOptions memo will also derive from map_data)
     } catch (e) {
       console.warn("Initial registry bootstrap failed", e);
-    } finally {
-      setIsBootstrapLoading(false);
     }
   }, []);
 
@@ -270,15 +657,15 @@ export function useChat(): UseChatReturn {
     bootstrapInitialRegistry();
   }, [bootstrapInitialRegistry]);
 
-  // ── Send a chat message ──────────────────────────────────────────────────
+  const plotFloatIds = useMemo(() => {
+    const figs = plotItems.map((p) => p.figure);
+    return extractFloatIdsFromFigures(figs);
+  }, [plotItems]);
+
   const sendMessage = useCallback(
     async (customText?: string) => {
       const queryText = (customText ?? input).trim();
       if (!queryText || isLoading) return;
-
-      // Sending a free-text query returns focus to the chat experience.
-      setSelectedFloat(null);
-      setMode("chat");
 
       const userMessage: ChatMessage = {
         id: generateId(),
@@ -306,6 +693,17 @@ export function useChat(): UseChatReturn {
         const response = await sendChatMessage(request, sessionIdRef.current);
 
         const figures: PlotlyFigure[] | null = response.figures ?? null;
+        const effectiveFigures: PlotlyFigure[] =
+          figures && figures.length > 0
+            ? figures
+            : response.figure
+              ? [
+                  {
+                    ...response.figure,
+                    variable: response.figure.variable || "plot",
+                  },
+                ]
+              : [];
 
         setMessages((prev) =>
           prev.map((msg) =>
@@ -314,7 +712,7 @@ export function useChat(): UseChatReturn {
                   ...msg,
                   content: response.message,
                   figure: response.figure,
-                  figures,
+                  figures: effectiveFigures.length > 0 ? effectiveFigures : null,
                   summary: response.data_summary,
                   intent: response.intent,
                   mapData: response.map_data,
@@ -324,18 +722,94 @@ export function useChat(): UseChatReturn {
           )
         );
 
-        // Populate the plot drawer from per-variable figures when present.
-        if (figures && figures.length > 0) {
+        if (effectiveFigures.length > 0) {
           setPlotItems(
-            figures.map((f, i) => ({
-              id: `${response.intent}-${i}-${f.variable ?? "var"}`,
-              variable: f.variable ?? "var",
-              title: f.variable ?? `Plot ${i + 1}`,
+            effectiveFigures.map((f, i) => ({
+              id: `${response.intent || "plot"}-${i}-${f.variable ?? "var"}`,
+              variable: f.variable ?? `var${i + 1}`,
+              title: f.variable
+                ? String(f.variable)
+                : ((f.layout as { title?: { text?: string } | string })?.title &&
+                    (typeof (f.layout as { title?: unknown }).title === "string"
+                      ? (f.layout as { title: string }).title
+                      : (f.layout as { title?: { text?: string } }).title
+                          ?.text)) ||
+                  `Plot ${i + 1}`,
               figure: f,
               pinned: false,
             }))
           );
+          const ids = extractFloatIdsFromFigures(effectiveFigures);
+          setPlotSelectedFloat(ids.length >= 1 ? ids[0] : null);
           setPlotDrawerOpen(true);
+        }
+
+        const singleId = detectSingleFloatFocus(response);
+        const mapData = response.map_data || [];
+        const intent = response.intent || "";
+
+        // Explicit trajectory chat response: respect and draw
+        if (intent === "trajectory" && singleId) {
+          setFocusFloatId(singleId);
+          setQueryMapData(null);
+          const ordered = mapData
+            .filter((m) => m.float_id === singleId)
+            .sort(
+              (a, b) => (a.profile_number ?? 0) - (b.profile_number ?? 0)
+            );
+          if (ordered.length > 0) {
+            setTrajectoryMapData(
+              ordered.map((m, idx) => ({
+                ...m,
+                selected: idx === ordered.length - 1,
+              }))
+            );
+            setTrajectoryVisible(true);
+            setCycleData(
+              ordered.map((m, idx) => ({
+                cycleNumber: m.profile_number ?? idx + 1,
+                date: m.profile_date,
+                latitude: m.latitude,
+                longitude: m.longitude,
+                variables: m.variables ?? [],
+                index: idx,
+                isDeployment: idx === 0,
+                isCurrent: idx === ordered.length - 1,
+              }))
+            );
+          }
+          // If already inspecting this float, keep metadata open
+          if (selectedFloat === singleId) {
+            setMode("metadata");
+          } else {
+            // Pin only — user can click marker for metadata
+            setSelectedFloat(null);
+            setMode("chat");
+            const latest = ordered[ordered.length - 1];
+            if (latest) setFocusMapData([{ ...latest, selected: false }]);
+          }
+        } else if (singleId) {
+          // Single-float search/profile: pin on map ONLY. No auto metadata/cycles/trajectory.
+          pinFloatOnMap(singleId, mapData);
+        } else {
+          // Multi-float / region / knowledge
+          setFocusFloatId(null);
+          setFocusMapData(null);
+          setTrajectoryVisible(false);
+          setTrajectoryMapData(null);
+          setSelectedFloat(null);
+          setMode("chat");
+          setCycleData(null);
+          setHighlightCycle(null);
+
+          const unique = new Set(mapData.map((m) => m.float_id).filter(Boolean));
+          if (unique.size > 1) {
+            setQueryMapData(mapData);
+          } else if (mapData.length === 0) {
+            setQueryMapData(null);
+          } else {
+            setQueryMapData(mapData);
+          }
         }
       } catch (error) {
         const errorMessage = getErrorMessage(error);
@@ -355,55 +829,23 @@ export function useChat(): UseChatReturn {
         setIsLoading(false);
       }
     },
-    [input, isLoading]
+    [input, isLoading, pinFloatOnMap, selectedFloat]
   );
 
-  // Auto-load cycles (kept for legacy trajectory responses)
-  useEffect(() => {
-    if (!selectedFloat) {
-      setCycleData(null);
-      return;
-    }
-    const trajForFloat = [...messages]
-      .reverse()
-      .find(
-        (m) =>
-          m.role === "assistant" &&
-          m.intent === "trajectory" &&
-          m.mapData?.some((mm) => mm.float_id === selectedFloat)
-      );
-    if (trajForFloat?.mapData) {
-      const ordered = trajForFloat.mapData
-        .filter((m) => m.float_id === selectedFloat)
-        .sort((a, b) => (a.profile_number ?? 0) - (b.profile_number ?? 0));
-      setCycleData(
-        ordered.map((m, idx) => ({
-          cycleNumber: m.profile_number ?? idx + 1,
-          date: m.profile_date,
-          latitude: m.latitude,
-          longitude: m.longitude,
-          variables: m.variables ?? [],
-          index: idx,
-          isDeployment: idx === 0,
-          isCurrent: idx === ordered.length - 1,
-        })) ?? null
-      );
-    }
-  }, [selectedFloat, messages]);
-
-  // ── Plot drawer pin toggle ───────────────────────────────────────────────
   const togglePlotPin = useCallback((id: string) => {
     setPlotItems((prev) =>
       prev.map((p) => (p.id === id ? { ...p, pinned: !p.pinned } : p))
     );
   }, []);
 
-  // ── Header float-ID search ───────────────────────────────────────────────
   const submitFloatSearch = useCallback(() => {
-    const fid = floatSearch.trim();
+    const raw = floatSearch.trim();
+    if (!raw) return;
+    const fid = raw.replace(/\D/g, "");
     if (!fid) return;
-    sendMessage(`Sensors on float ${fid.replace(/\D/g, "")}`);
-  }, [floatSearch, sendMessage]);
+    // Deterministic dashboard navigation — NO chat, NO LLM
+    openFloatInspector(fid);
+  }, [floatSearch, openFloatInspector]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -415,7 +857,6 @@ export function useChat(): UseChatReturn {
     [sendMessage]
   );
 
-  // ── Suggestion chip handler ──────────────────────────────────────────────
   const onSelectSuggestion = useCallback(
     (query: string) => {
       sendMessage(query);
@@ -436,6 +877,8 @@ export function useChat(): UseChatReturn {
     onSelectSuggestion,
     selectedFloat,
     setSelectedFloat: handleSelectFloat,
+    floatInfo,
+    isLoadingMetadata,
     currentMapData,
     mode,
     chatOpen,
@@ -445,10 +888,16 @@ export function useChat(): UseChatReturn {
     isLoadingCycles,
     highlightCycle,
     setHighlightCycle,
+    trajectoryVisible,
+    showTrajectory,
+    loadLatestProfile,
     plotItems,
     plotDrawerOpen,
     setPlotDrawerOpen,
     togglePlotPin,
+    plotFloatIds,
+    plotSelectedFloat,
+    setPlotSelectedFloat,
     filters,
     setFilters,
     filteredMapData,
@@ -458,5 +907,7 @@ export function useChat(): UseChatReturn {
     setFloatSearch,
     submitFloatSearch,
     loadCycleHistory,
+    isFloatFocusMode,
+    clearFloatFocus,
   } as UseChatReturn;
 }

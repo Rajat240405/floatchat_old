@@ -501,8 +501,10 @@ def _try_llm_extraction_as_recovery(
 
     # spatial_filter: ACCEPTABLE for gazetteer resolution (geographic inference)
     if spec.spatial_filter:
-        # Check if it's a known region
-        known_regions = {"arabian_sea", "bay_of_bengal", "indian_ocean"}
+        # Check if it's a known IO leaf or the indian_ocean alias
+        from floatchat.metadata_service.region_model import all_recognisable_io_names
+
+        known_regions = set(all_recognisable_io_names())
         sf = spec.spatial_filter.lower().replace(" ", "_").replace("-", "_")
         if sf in known_regions:
             updates["region"] = sf
@@ -1031,21 +1033,23 @@ def _log_response(response: ChatResponse, request_t0: float) -> None:
 
 
 # ================================================
-# NEW: Dedicated lightweight registry endpoint
-# Replaces the previous "floats in arabian sea" bootstrap workaround.
-# Returns data directly from Phase 2 float_registry + profile_index.
-# No LLM, no intent parser, no session, no /chat routing.
+# Dedicated lightweight registry endpoint
+# Returns ALL floats from Phase 2 float_registry + latest positions
+# from profile_index. No LIMIT truncation. No LLM.
 # ================================================
 @router.get("/floats/registry", response_model=FloatRegistryResponse)
 def get_float_registry_endpoint():
     """Lightweight dashboard bootstrap endpoint.
 
-    Returns:
-    - float_count
-    - map_data (latest position per float)
-    - available filter values (networks, dacs, variables, statuses)
+    Returns every float in the local lake with:
+    - latest known position
+    - registry status (active / inactive / drifted) — authoritative
+    - region_tag for Quick Region filters
+    - network / DAC / sensors for sidebar filters
 
-    Uses DuckDBDataLake directly. Safe for immediate startup use.
+    IMPORTANT: Must NOT apply an arbitrary profile LIMIT. A previous
+    ``get_profile_index(limit=10000)`` only saw floats present in the
+    newest 10k profiles, which collapsed a ~1300-float registry to ~269.
     """
     try:
         from floatchat.data_lake.duckdb_lake import DuckDBDataLake
@@ -1063,74 +1067,215 @@ def get_float_registry_endpoint():
         variables: set[str] = set()
         statuses: set[str] = set()
 
-        # Prefer float_registry for metadata + status/network
-        fr_df = lake.get_float_registry() if hasattr(lake, "get_float_registry") else pd.DataFrame()
+        fr_df = (
+            lake.get_float_registry()
+            if hasattr(lake, "get_float_registry")
+            else pd.DataFrame()
+        )
 
-        # Get latest position + float list from profile_index (or levels)
-        pi_df = pd.DataFrame()
-        if hasattr(lake, "get_profile_index"):
-            try:
-                pi_df = lake.get_profile_index(limit=10000)
-            except Exception:
-                pi_df = pd.DataFrame()
+        # Latest position per float — NO row limit. Aggregate in DuckDB so we
+        # never load the full profile_index into Python.
+        latest_by_float: dict[str, dict] = {}
+        try:
+            conn = lake._get_connection()
+            pi_path = None
+            levels_path = None
+            if lake._phase2_root and (lake._phase2_root / "parquet" / "profile_index").exists():
+                pi_path = (
+                    lake._phase2_root / "parquet" / "profile_index" / "**" / "*.parquet"
+                ).as_posix()
+            if lake._phase2_root and (lake._phase2_root / "parquet" / "levels").exists():
+                levels_path = (
+                    lake._phase2_root / "parquet" / "levels" / "**" / "*.parquet"
+                ).as_posix()
+            elif lake._lake_root.exists():
+                levels_path = (lake._lake_root / "**" / "*.parquet").as_posix()
 
-        if not pi_df.empty:
-            # Latest position per float
-            latest = pi_df.sort_values("date").groupby("float_id").tail(1)
+            if pi_path:
+                # Detect lat/lon column names from a 1-row sample
+                sample = conn.execute(
+                    f"SELECT * FROM read_parquet('{pi_path}', hive_partitioning=true) LIMIT 1"
+                ).fetchdf()
+                cols = {c.lower(): c for c in sample.columns}
+                lat_col = cols.get("latitude") or cols.get("lat") or "latitude"
+                lon_col = cols.get("longitude") or cols.get("lon") or "longitude"
+                region_col = cols.get("region_tag")
+                dac_col = cols.get("dac") or cols.get("institution")
 
-            for _, row in latest.iterrows():
-                fid = str(row.get("float_id", ""))
-                lat = float(row.get("lat", row.get("latitude", 0) or 0))
-                lon = float(row.get("lon", row.get("longitude", 0) or 0))
+                region_select = (
+                    f"arg_max({region_col}, date) AS region_tag"
+                    if region_col
+                    else "CAST(NULL AS VARCHAR) AS region_tag"
+                )
+                dac_select = (
+                    f"arg_max({dac_col}, date) AS dac"
+                    if dac_col
+                    else "CAST('' AS VARCHAR) AS dac"
+                )
 
-                map_data.append({
-                    "float_id": fid,
-                    "latitude": lat,
-                    "longitude": lon,
-                    "profile_date": str(row.get("date", ""))[:10] if pd.notna(row.get("date")) else None,
-                    "dac": str(row.get("dac", row.get("institution", "")) or ""),
-                    "variables": [],
-                    "selected": False,
-                    "status": "unknown",
-                    "network": "Core Argo",
-                })
+                sql = f"""
+                SELECT
+                    CAST(float_id AS VARCHAR) AS float_id,
+                    arg_max({lat_col}, date) AS lat,
+                    arg_max({lon_col}, date) AS lon,
+                    max(date) AS profile_date,
+                    {region_select},
+                    {dac_select}
+                FROM read_parquet('{pi_path}', hive_partitioning=true)
+                GROUP BY float_id
+                """
+                pos_df = conn.execute(sql).fetchdf()
+                for _, row in pos_df.iterrows():
+                    fid = str(row["float_id"])
+                    latest_by_float[fid] = {
+                        "lat": float(row["lat"]) if pd.notna(row.get("lat")) else None,
+                        "lon": float(row["lon"]) if pd.notna(row.get("lon")) else None,
+                        "profile_date": (
+                            str(row["profile_date"])[:10]
+                            if pd.notna(row.get("profile_date"))
+                            else None
+                        ),
+                        "region_tag": (
+                            str(row["region_tag"])
+                            if pd.notna(row.get("region_tag")) and row.get("region_tag")
+                            else None
+                        ),
+                        "dac": str(row["dac"]) if pd.notna(row.get("dac")) else "",
+                    }
+            elif levels_path:
+                sql = f"""
+                SELECT
+                    CAST(float_id AS VARCHAR) AS float_id,
+                    arg_max(lat, date) AS lat,
+                    arg_max(lon, date) AS lon,
+                    max(date) AS profile_date,
+                    arg_max(region_tag, date) AS region_tag,
+                    COALESCE(arg_max(dac, date), '') AS dac
+                FROM read_parquet('{levels_path}', hive_partitioning=true)
+                GROUP BY float_id
+                """
+                pos_df = conn.execute(sql).fetchdf()
+                for _, row in pos_df.iterrows():
+                    fid = str(row["float_id"])
+                    latest_by_float[fid] = {
+                        "lat": float(row["lat"]) if pd.notna(row.get("lat")) else None,
+                        "lon": float(row["lon"]) if pd.notna(row.get("lon")) else None,
+                        "profile_date": (
+                            str(row["profile_date"])[:10]
+                            if pd.notna(row.get("profile_date"))
+                            else None
+                        ),
+                        "region_tag": (
+                            str(row["region_tag"])
+                            if pd.notna(row.get("region_tag")) and row.get("region_tag")
+                            else None
+                        ),
+                        "dac": str(row["dac"]) if pd.notna(row.get("dac")) else "",
+                    }
+        except Exception as exc:
+            logger.warning("Registry position aggregation failed: %s", exc)
 
-        # Enrich from float_registry
-        if not fr_df.empty and len(map_data) > 0:
-            fr_map = {}
+        _BGC_MARKERS = (
+            "DOXY", "CHLA", "NITRATE", "BBP", "PH", "PAR",
+            "OPTODE", "FLUOROMETER", "BACKSCATTER", "SUNA", "ISUS", "OCR",
+        )
+
+        # Prefer iterating float_registry (authoritative membership + status).
+        # Fall back to positions-only if registry file is missing.
+        source_ids: list[str]
+        fr_map: dict[str, dict] = {}
+        if not fr_df.empty:
             for _, r in fr_df.iterrows():
-                fid = str(r.get("float_id", ""))
+                fid = str(r.get("float_id", "")).strip()
+                if not fid:
+                    continue
+                raw_sensors = r.get("sensors", "")
+                if isinstance(raw_sensors, list):
+                    sensors = [str(s).strip().upper() for s in raw_sensors if str(s).strip()]
+                elif isinstance(raw_sensors, str) and raw_sensors:
+                    sensors = [s.strip().upper() for s in raw_sensors.split(",") if s.strip()]
+                else:
+                    sensors = []
+                sensor_blob = " ".join(sensors)
+                network = (
+                    "BGC Argo"
+                    if any(k in sensor_blob for k in _BGC_MARKERS)
+                    else "Core Argo"
+                )
+                region_tag = (
+                    str(r.get("region_tag"))
+                    if pd.notna(r.get("region_tag")) and r.get("region_tag")
+                    else None
+                )
+                # Authoritative status from registry ETL (active/inactive/drifted)
+                status = str(r.get("status", "unknown") or "unknown").lower()
+                if status not in ("active", "inactive", "drifted", "unknown"):
+                    status = "unknown"
+                institution = str(r.get("institution", "") or "")
                 fr_map[fid] = {
-                    "status": str(r.get("status", "unknown")),
-                    "sensors": r.get("sensors", []) if isinstance(r.get("sensors"), list) else str(r.get("sensors", "")).split(","),
-                    "institution": str(r.get("institution", "")),
+                    "status": status,
+                    "sensors": sensors,
+                    "institution": institution,
+                    "network": network,
+                    "region_tag": region_tag,
+                    "last_report_date": (
+                        str(r.get("last_report_date"))[:10]
+                        if pd.notna(r.get("last_report_date"))
+                        else None
+                    ),
+                    "profiler_type": str(r.get("profiler_type", "") or "") or None,
+                    "manufacturer": str(r.get("manufacturer", "") or "") or None,
                 }
+            source_ids = list(fr_map.keys())
+        else:
+            source_ids = list(latest_by_float.keys())
 
-            for m in map_data:
-                fid = m["float_id"]
-                if fid in fr_map:
-                    fr = fr_map[fid]
-                    m["status"] = fr["status"]
-                    sensors = fr["sensors"] or []
-                    m["variables"] = [s.strip().upper() for s in sensors if s.strip()]
-                    # Derive network
-                    sensor_blob = " ".join(s.upper() for s in m["variables"])
-                    m["network"] = "BGC Argo" if any(k in sensor_blob for k in ["DOXY", "CHLA", "NITRATE", "BBP", "PH", "PAR"]) else "Core Argo"
-                    if fr["institution"]:
-                        m["dac"] = fr["institution"]
+        for fid in source_ids:
+            pos = latest_by_float.get(fid, {})
+            fr = fr_map.get(fid, {})
+            lat = pos.get("lat")
+            lon = pos.get("lon")
+            # Skip floats with no usable coordinates
+            if lat is None or lon is None:
+                continue
+            if not (-90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0):
+                continue
+            if float(lat) == 0.0 and float(lon) == 0.0:
+                continue
 
-        # Build unique filter values
+            status = fr.get("status") or "unknown"
+            sensors = fr.get("sensors") or []
+            network = fr.get("network") or "Core Argo"
+            region_tag = fr.get("region_tag") or pos.get("region_tag")
+            dac = fr.get("institution") or pos.get("dac") or ""
+            profile_date = pos.get("profile_date") or fr.get("last_report_date")
+
+            map_data.append({
+                "float_id": fid,
+                "latitude": float(lat),
+                "longitude": float(lon),
+                "profile_date": profile_date,
+                "dac": dac,
+                "variables": sensors,
+                "selected": False,
+                "status": status,
+                "network": network,
+                "region_tag": region_tag,
+                "wmo_id": fid,
+                "profiler_type": fr.get("profiler_type"),
+                "manufacturer": fr.get("manufacturer"),
+            })
+
         for m in map_data:
             if m.get("network"):
                 networks.add(m["network"])
             if m.get("dac"):
                 dacs.add(m["dac"])
-            for v in m.get("variables", []):
-                variables.add(v.upper())
+            for v in m.get("variables") or []:
+                variables.add(str(v).upper())
             if m.get("status"):
                 statuses.add(m["status"])
 
-        # Sensible fallbacks
         if not networks:
             networks = {"Core Argo", "BGC Argo"}
         if not dacs:
@@ -1138,7 +1283,14 @@ def get_float_registry_endpoint():
         if not variables:
             variables = {"TEMP", "PSAL", "DOXY", "CHLA"}
         if not statuses:
-            statuses = {"active", "inactive"}
+            statuses = {"active", "inactive", "drifted"}
+
+        logger.info(
+            "Registry endpoint: %d floats (registry_rows=%d, positions=%d)",
+            len(map_data),
+            len(fr_map),
+            len(latest_by_float),
+        )
 
         return FloatRegistryResponse(
             float_count=len(map_data),
@@ -1150,12 +1302,418 @@ def get_float_registry_endpoint():
         )
     except Exception as exc:
         logger.exception("Registry endpoint failed: %s", exc)
-        # Return empty but valid response so frontend never crashes
         return FloatRegistryResponse(
             float_count=0,
             map_data=[],
             networks=["Core Argo", "BGC Argo"],
             dacs=["INCOIS", "Coriolis", "AOML"],
             variables=["TEMP", "PSAL", "DOXY", "CHLA"],
-            statuses=["active", "inactive"],
+            statuses=["active", "inactive", "drifted"],
         )
+
+
+# ================================================
+# Deterministic float resources — NO LLM, NO chat
+# Used by UI actions: marker click, float search,
+# View Trajectory, Show Latest Profile, cycle history.
+# ================================================
+
+
+class FloatMetadataAPIResponse(BaseModel):
+    float_info: dict[str, Any]
+    map_data: list[dict] = Field(default_factory=list)
+
+
+class FloatTrajectoryAPIResponse(BaseModel):
+    float_id: str
+    cycle_count: int
+    map_data: list[dict] = Field(default_factory=list)
+    distance_km: float | None = None
+    date_range: dict[str, Any] = Field(default_factory=dict)
+
+
+class FloatProfileAPIResponse(BaseModel):
+    float_id: str
+    intent: str = "profile_plot"
+    message: str = ""
+    figure: dict[str, Any] | None = None
+    figures: list[dict[str, Any]] | None = None
+    data_summary: dict[str, Any] = Field(default_factory=dict)
+    map_data: list[dict] = Field(default_factory=list)
+
+
+def _get_lake():
+    """Shared DuckDB lake helper for deterministic endpoints."""
+    from floatchat.data_lake.duckdb_lake import DuckDBDataLake
+    from floatchat.config import settings
+
+    return DuckDBDataLake(
+        phase2_root=Path(settings.data_lake_dir) if settings.data_lake_phase2_enabled else None,
+        use_phase2=settings.data_lake_phase2_enabled,
+    )
+
+
+@router.get("/floats/{float_id}/metadata", response_model=FloatMetadataAPIResponse)
+def get_float_metadata(float_id: str):
+    """Deterministic metadata lookup. No LLM. No chat routing."""
+    clean = str(float_id).strip()
+    try:
+        if clean.endswith(".0") and float(clean) == int(float(clean)):
+            clean = str(int(float(clean)))
+    except (TypeError, ValueError):
+        pass
+    lake = _get_lake()
+    info = lake.query_metadata_lookup(clean) if lake else {"found": False, "float_id": clean}
+    # Guarantee float_id is the clean form
+    if isinstance(info, dict):
+        info["float_id"] = clean
+        info["wmo_id"] = clean
+
+    map_data: list[dict] = []
+    if info.get("last_lat") is not None and info.get("last_lon") is not None:
+        map_data.append(
+            {
+                "float_id": clean,
+                "latitude": float(info["last_lat"]),
+                "longitude": float(info["last_lon"]),
+                "profile_date": info.get("last_report_date"),
+                "dac": info.get("dac") or info.get("institution") or "",
+                "variables": info.get("sensors") or [],
+                "selected": True,
+                "status": info.get("status") or "unknown",
+                "network": info.get("network") or "Core Argo",
+                "wmo_id": clean,
+                "region_tag": info.get("region_tag"),
+                "manufacturer": info.get("manufacturer"),
+                "profiler_type": info.get("profiler_type"),
+            }
+        )
+
+    return FloatMetadataAPIResponse(float_info=info, map_data=map_data)
+
+
+@router.get("/floats/{float_id}/trajectory", response_model=FloatTrajectoryAPIResponse)
+def get_float_trajectory(float_id: str):
+    """Deterministic trajectory + full cycle history. No LLM. No chat routing.
+
+    Returns ALL cycles for the float (safety cap 50_000). Cycles without valid
+    coordinates are still included so Cycle History is complete; the map simply
+    skips plotting those points.
+    """
+    import math
+    import pandas as pd
+
+    clean = str(float_id).strip()
+    # Normalize "7902190.0" → "7902190"
+    try:
+        if clean.endswith(".0") and float(clean) == int(float(clean)):
+            clean = str(int(float(clean)))
+    except (TypeError, ValueError):
+        pass
+
+    lake = _get_lake()
+    df = pd.DataFrame()
+
+    if lake and (lake.is_available() or lake.is_phase2_available()):
+        if hasattr(lake, "get_profile_index"):
+            df = lake.get_profile_index(float_id=clean, limit=50000)
+            # Retry with alternate string forms if empty (id type mismatch)
+            if df.empty:
+                for alt in (f"{clean}.0", clean.lstrip("0") or clean):
+                    if alt != clean:
+                        df = lake.get_profile_index(float_id=alt, limit=50000)
+                        if not df.empty:
+                            break
+        if df.empty and hasattr(lake, "_lake_root") and lake._lake_root.exists():
+            try:
+                conn = lake._get_connection()
+                pi_path = (
+                    (lake._phase2_root / "parquet" / "profile_index" / "**" / "*.parquet").as_posix()
+                    if lake._phase2_root
+                    and (lake._phase2_root / "parquet" / "profile_index").exists()
+                    else (lake._lake_root / "**" / "*.parquet").as_posix()
+                )
+                sample = conn.execute(
+                    f"SELECT * FROM read_parquet('{pi_path}', hive_partitioning=true) LIMIT 1"
+                ).fetchdf()
+                cols = [c.lower() for c in sample.columns]
+                lat_col = "lat" if "lat" in cols else ("latitude" if "latitude" in cols else "lat")
+                lon_col = "lon" if "lon" in cols else ("longitude" if "longitude" in cols else "lon")
+                has_cycle = "cycle_number" in cols
+                has_av = "available_variables" in cols
+                cycle_sel = "cycle_number" if has_cycle else "CAST(NULL AS INTEGER) AS cycle_number"
+                av_sel = (
+                    "COALESCE(available_variables, '') AS available_variables"
+                    if has_av
+                    else "CAST('' AS VARCHAR) AS available_variables"
+                )
+                # One row per cycle when cycle_number exists; else one per date
+                if has_cycle:
+                    sql = (
+                        f"SELECT CAST(float_id AS VARCHAR) AS float_id, "
+                        f"cycle_number, "
+                        f"min(date) AS date, "
+                        f"arg_max({lat_col}, date) AS lat, "
+                        f"arg_max({lon_col}, date) AS lon, "
+                        f"COALESCE(arg_max(dac, date), '') AS dac, "
+                        f"{av_sel.replace('available_variables', 'arg_max(available_variables, date)') if has_av else av_sel} "
+                        f"FROM read_parquet('{pi_path}', hive_partitioning=true) "
+                        f"WHERE regexp_replace(CAST(float_id AS VARCHAR), '\\.0$', '') = ? "
+                        f"GROUP BY float_id, cycle_number "
+                        f"ORDER BY min(date) ASC"
+                    )
+                else:
+                    sql = (
+                        f"SELECT CAST(float_id AS VARCHAR) AS float_id, date, "
+                        f"arg_max({lat_col}, date) AS lat, arg_max({lon_col}, date) AS lon, "
+                        f"COALESCE(arg_max(dac, date), '') AS dac, "
+                        f"CAST(NULL AS INTEGER) AS cycle_number, "
+                        f"CAST('' AS VARCHAR) AS available_variables "
+                        f"FROM read_parquet('{pi_path}', hive_partitioning=true) "
+                        f"WHERE regexp_replace(CAST(float_id AS VARCHAR), '\\.0$', '') = ? "
+                        f"GROUP BY float_id, date ORDER BY date ASC"
+                    )
+                df = conn.execute(sql, [clean]).fetchdf()
+            except Exception as exc:
+                logger.warning("Trajectory endpoint lake query failed: %s", exc)
+
+    if df.empty:
+        return FloatTrajectoryAPIResponse(
+            float_id=clean, cycle_count=0, map_data=[], distance_km=0.0, date_range={}
+        )
+
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.sort_values(
+            by=["cycle_number", "date"] if "cycle_number" in df.columns else ["date"],
+            ascending=True,
+        )
+
+    # Authoritative status from registry
+    status = "unknown"
+    network = "Core Argo"
+    try:
+        fr = lake.get_float_registry(float_id=clean) if lake else None
+        if fr is not None and not fr.empty:
+            status = str(fr.iloc[0].get("status", "unknown") or "unknown").lower()
+            sensors_raw = fr.iloc[0].get("sensors", "")
+            sensor_blob = str(sensors_raw).upper()
+            if any(
+                k in sensor_blob
+                for k in ("DOXY", "CHLA", "NITRATE", "BBP", "PH", "OPTODE", "FLUOROMETER")
+            ):
+                network = "BGC Argo"
+    except Exception:
+        pass
+
+    # Optional per-cycle stats from levels (max depth, surface TEMP/PSAL)
+    cycle_stats: dict[int, dict] = {}
+    try:
+        levels_path = None
+        if lake._phase2_root and (lake._phase2_root / "parquet" / "levels").exists():
+            levels_path = (lake._phase2_root / "parquet" / "levels" / "**" / "*.parquet").as_posix()
+        elif lake._lake_root.exists():
+            levels_path = (lake._lake_root / "**" / "*.parquet").as_posix()
+        if levels_path:
+            conn = lake._get_connection()
+            stats_sql = f"""
+            SELECT
+                CAST(cycle_number AS INTEGER) AS cycle_number,
+                max(pressure) AS max_depth,
+                avg(CASE WHEN pressure <= 20 THEN COALESCE(temp_adjusted, temp) END) AS temp_surface,
+                avg(CASE WHEN pressure <= 20 THEN COALESCE(psal_adjusted, psal) END) AS psal_surface
+            FROM read_parquet('{levels_path}', hive_partitioning=true)
+            WHERE regexp_replace(CAST(float_id AS VARCHAR), '\\.0$', '') = ?
+            GROUP BY cycle_number
+            """
+            sdf = conn.execute(stats_sql, [clean]).fetchdf()
+            for _, r in sdf.iterrows():
+                try:
+                    cn = int(r["cycle_number"])
+                except Exception:
+                    continue
+                cycle_stats[cn] = {
+                    "max_depth": float(r["max_depth"]) if pd.notna(r.get("max_depth")) else None,
+                    "temp": float(r["temp_surface"]) if pd.notna(r.get("temp_surface")) else None,
+                    "salinity": float(r["psal_surface"]) if pd.notna(r.get("psal_surface")) else None,
+                }
+    except Exception as exc:
+        logger.debug("cycle stats from levels failed: %s", exc)
+
+    lat_col = "lat" if "lat" in df.columns else "latitude"
+    lon_col = "lon" if "lon" in df.columns else "longitude"
+
+    # Distance only over consecutive valid points
+    valid_coords = []
+    for _, row in df.iterrows():
+        try:
+            la = float(row[lat_col]) if pd.notna(row.get(lat_col)) else None
+            lo = float(row[lon_col]) if pd.notna(row.get(lon_col)) else None
+        except Exception:
+            la = lo = None
+        if la is not None and lo is not None and math.isfinite(la) and math.isfinite(lo):
+            if not (la == 0.0 and lo == 0.0):
+                valid_coords.append((la, lo))
+    total_dist_km = 0.0
+    for i in range(len(valid_coords) - 1):
+        lat1, lon1 = valid_coords[i]
+        lat2, lon2 = valid_coords[i + 1]
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = (
+            math.sin(dlat / 2) ** 2
+            + math.cos(math.radians(lat1))
+            * math.cos(math.radians(lat2))
+            * math.sin(dlon / 2) ** 2
+        )
+        c = 2 * math.asin(math.sqrt(max(0.0, min(1.0, a))))
+        total_dist_km += 6371.0 * c
+
+    map_data: list[dict] = []
+    for idx_count, (_, row) in enumerate(df.iterrows()):
+        try:
+            lat_val = float(row[lat_col]) if pd.notna(row.get(lat_col)) else None
+            lon_val = float(row[lon_col]) if pd.notna(row.get(lon_col)) else None
+        except Exception:
+            lat_val = lon_val = None
+        if lat_val is not None and (not math.isfinite(lat_val) or (lat_val == 0.0 and lon_val == 0.0)):
+            lat_val = None
+        if lon_val is not None and not math.isfinite(lon_val):
+            lon_val = None
+
+        date_val = None
+        if "date" in df.columns and pd.notna(row.get("date")) and str(row.get("date")) != "NaT":
+            d = row["date"]
+            if hasattr(d, "strftime"):
+                date_val = d.strftime("%Y-%m-%d")
+            else:
+                date_val = str(d)[:10]
+
+        p_num = None
+        for col in ("cycle_number", "profile_number"):
+            if col in df.columns and pd.notna(row.get(col)):
+                try:
+                    p_num = int(float(row[col]))
+                    break
+                except Exception:
+                    pass
+        # Do NOT invent sequential numbers that skip real cycle 1 —
+        # only fall back when the source has no cycle_number column at all.
+        if p_num is None and "cycle_number" not in df.columns:
+            p_num = idx_count + 1
+
+        cycle_vars: list[str] = []
+        if "available_variables" in df.columns and pd.notna(row.get("available_variables")):
+            cycle_vars = [
+                v
+                for v in str(row.get("available_variables")).split()
+                if v and v.upper() not in {"NAN", "NONE"}
+            ]
+
+        stats = cycle_stats.get(p_num or -1, {})
+
+        map_data.append(
+            {
+                "float_id": clean,
+                "latitude": lat_val if lat_val is not None else 0.0,
+                "longitude": lon_val if lon_val is not None else 0.0,
+                "has_position": lat_val is not None and lon_val is not None,
+                "profile_date": date_val,
+                "profile_number": p_num,
+                "dac": str(row.get("dac", "") or ""),
+                "variables": cycle_vars,
+                "selected": idx_count == len(df) - 1,
+                "status": status,
+                "network": network,
+                "wmo_id": clean,
+                "max_depth": stats.get("max_depth"),
+                "temp": stats.get("temp"),
+                "salinity": stats.get("salinity"),
+            }
+        )
+
+    min_d = None
+    max_d = None
+    if "date" in df.columns and not df["date"].isna().all():
+        try:
+            min_d = pd.to_datetime(df["date"].min()).strftime("%Y-%m-%d")
+            max_d = pd.to_datetime(df["date"].max()).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    return FloatTrajectoryAPIResponse(
+        float_id=clean,
+        cycle_count=len(map_data),
+        map_data=map_data,
+        distance_km=round(total_dist_km, 1),
+        date_range={"min": min_d, "max": max_d},
+    )
+
+
+@router.get("/floats/{float_id}/latest-profile", response_model=FloatProfileAPIResponse)
+def get_float_latest_profile(float_id: str):
+    """Deterministic latest-profile plot. No LLM. No chat routing.
+
+    Builds a ParsedIntent and runs the lake-only QueryEngine path with the
+    scientific narrator forced off so this UI action never invokes an LLM.
+    """
+    from floatchat.models import ParsedIntent
+    from floatchat.query_engine.engine import QueryEngine
+    from floatchat.visualization_engine.profile import ProfileVisualizationEngine
+    from floatchat.metadata_service.gdac import GDACMetadataService
+    from floatchat.repository_service.gdac_http import GDACRepositoryService
+    from floatchat.netcdf_reader.bgc_reader import BGCNetCDFReader
+    from floatchat.config import settings
+
+    clean = str(float_id).strip()
+    intent = ParsedIntent(
+        intent="profile_plot",
+        float_id=clean,
+        variables=["TEMP", "PSAL", "DOXY", "CHLA"],
+        limit=1,
+    )
+
+    # Force narrator off for this request (restore afterward)
+    prev_flag = getattr(settings, "sci_narrator_enabled", True)
+    settings.sci_narrator_enabled = False
+    try:
+        engine = QueryEngine(
+            GDACMetadataService(),
+            GDACRepositoryService(),
+            BGCNetCDFReader(),
+            ProfileVisualizationEngine(),
+        )
+
+        class _SilentExplainer:
+            """Drop-in that never calls an LLM."""
+
+            def generate_explanation(self, *a, **k):
+                return ""
+
+            def _narration_is_enabled(self):
+                return False
+
+        engine.explanation_engine = _SilentExplainer()  # type: ignore[assignment]
+        response = engine.execute(intent)
+    finally:
+        settings.sci_narrator_enabled = prev_flag
+
+    msg = response.message or f"Latest profile for float {clean}."
+    # Strip trailing empty explanation separators
+    while msg.endswith("\n"):
+        msg = msg[:-1]
+    if msg.endswith("\n\n"):
+        msg = msg.rstrip()
+
+    return FloatProfileAPIResponse(
+        float_id=clean,
+        intent=response.intent,
+        message=msg,
+        figure=response.figure,
+        figures=response.figures,
+        data_summary=response.data_summary or {},
+        map_data=[
+            m.model_dump() if hasattr(m, "model_dump") else m
+            for m in (response.map_data or [])
+        ],
+    )

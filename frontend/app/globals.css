@@ -48,10 +48,48 @@
     @apply bg-background text-foreground antialiased;
     font-family: 'Inter', system-ui, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-size: 14px;
+    line-height: 1.5;
   }
 
   html {
     scroll-behavior: smooth;
+  }
+
+  /* ── Typography scale (design system) ──────────────────────────────
+     Use these semantic classes across panels for consistent type:
+       .fc-title      — panel / page title (15–16px, semibold)
+       .fc-heading    — section heading (13px, semibold)
+       .fc-label      — field / column label (10px, uppercase, muted)
+       .fc-value      — primary value text (13px, medium)
+       .fc-body       — body copy (13px, regular)
+       .fc-meta       — secondary meta (11px, muted)
+       .fc-table      — table cell (12px)
+       .fc-btn        — button label (12px, semibold)
+  */
+  .fc-title {
+    @apply text-[15px] font-semibold tracking-tight text-slate-800;
+  }
+  .fc-heading {
+    @apply text-[13px] font-semibold text-slate-700;
+  }
+  .fc-label {
+    @apply text-[10px] font-semibold uppercase tracking-wider text-slate-400;
+  }
+  .fc-value {
+    @apply text-[13px] font-medium text-slate-700;
+  }
+  .fc-body {
+    @apply text-[13px] font-normal text-slate-600;
+  }
+  .fc-meta {
+    @apply text-[11px] font-medium text-slate-500;
+  }
+  .fc-table {
+    @apply text-[12px] font-medium text-slate-700;
+  }
+  .fc-btn {
+    @apply text-[12px] font-semibold;
   }
 }
 

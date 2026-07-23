@@ -16,6 +16,8 @@ export interface MapData {
   network?: string | null;
   /** WMO identifier (mirrors float_id when not distinct). */
   wmo_id?: string | null;
+  /** India-region tag from registry/profile_index (arabian_sea | bay_of_bengal | indian_ocean). */
+  region_tag?: string | null;
 }
 
 export interface FloatRegistryInfo {
@@ -135,14 +137,16 @@ export interface ChatResponse {
 export interface CyclePoint {
   cycleNumber: number;
   date: string | null;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   variables: string[];
   /** 0-based index within the trajectory (deployment = 0). */
   index: number;
   isDeployment: boolean;
   isCurrent: boolean;
-  // Additive fields for Stitch Cycle History table (populated when available from backend)
+  /** Whether lat/lon are usable for map plotting. */
+  hasPosition?: boolean;
+  // Populated from levels table when available
   maxDepth?: number | null;
   temp?: number | null;
   salinity?: number | null;

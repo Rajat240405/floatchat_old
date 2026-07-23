@@ -22,7 +22,7 @@ export function formatTime(date: Date): string {
 export function formatDate(iso: string | null | undefined): string {
   if (!iso || iso === "NaT" || iso === "Unknown") return "—";
   const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso.slice(0, 10);
+  if (isNaN(d.getTime())) return String(iso).slice(0, 10);
   return d.toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "short",
@@ -48,19 +48,52 @@ export function prettyRegion(tag: string | null | undefined): string {
   return tag.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Extract YYYY-MM-DD from various date representations (timezone-safe). */
+function toDateKey(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const s = String(value).trim();
+  // Already ISO date or datetime
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  // Use UTC components to avoid off-by-one from local TZ
+  const y = d.getUTCFullYear();
+  const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${mo}-${day}`;
+}
+
 /**
  * Apply the scientific sidebar filters to a list of map markers.
- * Filtering is client-side over the latest mapData. A marker passes when it
- * satisfies every active (non-empty) filter dimension. Empty dimensions pass
- * all markers, so this composes cleanly.
+ * Filtering is client-side over the latest mapData.
  */
 export function applyFilters(markers: MapData[], filters: FilterState): MapData[] {
   const has = (arr: string[]) => arr.length > 0;
+  const fromKey = filters.dateFrom || null;
+  const toKey = filters.dateTo || null;
+
   return markers.filter((m) => {
+    // Region via region_tag
     if (filters.region) {
-      // Region not carried on MapData; matched via the query that produced
-      // markers. When a region filter is active we cannot drop markers
-      // reliably, so we leave region to query-time and do not filter here.
+      const tag = (m.region_tag || "").toLowerCase();
+      const want = filters.region.toLowerCase();
+      // indian_ocean is a query alias for all IO leaf tags (+ legacy stored tag).
+      if (want === "indian_ocean") {
+        const ioLeaves = new Set([
+          "arabian_sea",
+          "bay_of_bengal",
+          "equatorial_indian_ocean",
+          "southern_indian_ocean",
+          "indian_ocean", // legacy stored open-basin tag
+        ]);
+        if (tag && !ioLeaves.has(tag)) return false;
+        // empty tag: keep (incomplete marker metadata)
+      } else if (tag) {
+        if (tag !== want) return false;
+      } else {
+        return false;
+      }
     }
     if (has(filters.networks)) {
       const net = (m.network || "Core Argo").toLowerCase();
@@ -68,22 +101,23 @@ export function applyFilters(markers: MapData[], filters: FilterState): MapData[
     }
     if (has(filters.dacs)) {
       const dac = (m.dac || "").toLowerCase();
-      if (!filters.dacs.some((d) => d.toLowerCase() === dac || dac.includes(d.toLowerCase())))
+      if (
+        !filters.dacs.some(
+          (d) => d.toLowerCase() === dac || dac.includes(d.toLowerCase())
+        )
+      )
         return false;
-    }
-    if (has(filters.variables)) {
-      const vars = (m.variables || []).map((v) => v.toUpperCase());
-      if (!filters.variables.some((v) => vars.includes(v.toUpperCase()))) return false;
     }
     if (has(filters.statuses)) {
       const st = (m.status || "unknown").toLowerCase();
       if (!filters.statuses.some((s) => s.toLowerCase() === st)) return false;
     }
-    if (filters.dateFrom || filters.dateTo) {
-      const t = m.profile_date ? new Date(m.profile_date).getTime() : NaN;
-      if (isNaN(t)) return false;
-      if (filters.dateFrom && t < new Date(filters.dateFrom).getTime()) return false;
-      if (filters.dateTo && t > new Date(filters.dateTo + "T23:59:59").getTime()) return false;
+    // Date range — compare calendar dates as YYYY-MM-DD strings (lexicographic)
+    if (fromKey || toKey) {
+      const key = toDateKey(m.profile_date);
+      if (!key) return false;
+      if (fromKey && key < fromKey) return false;
+      if (toKey && key > toKey) return false;
     }
     return true;
   });
@@ -95,11 +129,8 @@ export function hasActiveFilters(filters: FilterState): boolean {
     filters.region !== EMPTY_FILTERS.region ||
     filters.networks.length > 0 ||
     filters.dacs.length > 0 ||
-    filters.variables.length > 0 ||
     filters.statuses.length > 0 ||
     filters.dateFrom !== "" ||
-    filters.dateTo !== "" ||
-    !!filters.deepFloats
+    filters.dateTo !== ""
   );
 }
-

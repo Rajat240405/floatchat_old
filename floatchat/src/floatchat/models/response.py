@@ -48,6 +48,7 @@ class MapData(BaseModel):
     # metadata inspector. Derived when not authoritative.
     network: str | None = Field(default=None, description="Argo network: Core Argo or BGC Argo.")
     wmo_id: str | None = Field(default=None, description="WMO identifier (mirrors float_id when not distinct).")
+    region_tag: str | None = Field(default=None, description="India-region tag: arabian_sea | bay_of_bengal | indian_ocean.")
 
 
 class ChatResponse(BaseModel):

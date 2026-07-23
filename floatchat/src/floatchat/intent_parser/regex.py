@@ -116,10 +116,21 @@ for canonical, synonyms in _VARIABLE_SYNONYMS.items():
 _REGION_SYNONYMS: dict[str, list[str]] = {
     "arabian_sea": ["arabian sea"],
     "bay_of_bengal": ["bay of bengal"],
+    "equatorial_indian_ocean": [
+        "equatorial indian ocean",
+        "equatorial io",
+        "tropical indian ocean",
+    ],
+    "southern_indian_ocean": [
+        "southern indian ocean",
+        "south indian ocean",
+        "southern io",
+    ],
     "north_atlantic": ["north atlantic"],
     "south_atlantic": ["south atlantic"],
     "north_pacific": ["north pacific"],
     "south_pacific": ["south pacific"],
+    # Query alias — expand_region_filter maps this to all four IO leaves.
     "indian_ocean": ["indian ocean"],
     "southern_ocean": ["southern ocean"],
     "mediterranean_sea": ["mediterranean", "mediterranean sea"],

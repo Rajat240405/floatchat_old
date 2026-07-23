@@ -1,5 +1,13 @@
 import axios, { AxiosError } from "axios";
-import { ChatRequest, ChatResponse, HealthResponse } from "@/types";
+import {
+  ChatRequest,
+  ChatResponse,
+  HealthResponse,
+  MapData,
+  FloatRegistryInfo,
+  PlotlyFigure,
+  DataSummary,
+} from "@/types";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
 
@@ -10,6 +18,8 @@ const api = axios.create({
   },
   timeout: 180000,
 });
+
+// ── Chat (LLM path — natural language ONLY) ───────────────────────────────
 
 export async function sendChatMessage(
   request: ChatRequest,
@@ -28,45 +38,80 @@ export async function checkHealth(): Promise<HealthResponse> {
   return data;
 }
 
-// Bootstrap to populate live dashboard filters + map immediately on startup.
-//
-// IMPORTANT: WORKAROUND — uses a hardcoded natural-language query.
-//
-// Why this approach:
-// - The UI requires immediate population of SidebarFilters (Network, DAC, Variables, Status)
-//   + Active Float count + MapPanel markers on first load (no user query required).
-// - The only public endpoint that returns `map_data` (list of float locations + metadata)
-//   is the conversational `/chat` endpoint.
-// - A previous attempt using the message "bootstrap initial float registry for dashboard filters"
-//   sometimes returned empty map_data (unreliable intent classification / data lake match).
-// - "floats in arabian sea" is a proven, reliable query that triggers a region_search
-//   against the local data lake and reliably returns real map_data (floats in Arabian Sea).
-//
-// This is a TEMPORARY WORKAROUND to restore "live on startup" behavior after regressions.
-//
-// RECOMMENDED LONG-TERM SOLUTION:
-//   Add a dedicated, lightweight backend endpoint (e.g. GET /api/v1/floats/registry
-//   or GET /api/v1/bootstrap) that directly exposes float registry data from
-//   float_registry.parquet (via lake.get_float_registry()) + derived filter options.
-//   The frontend bootstrap should call that instead of a chat message.
-//
-// Do NOT change the query string here without also updating backend expectations
-// and re-testing filter population on clean startup.
-export async function getFloatRegistry(): Promise<any> {
-  const { data } = await api.get<any>("/api/v1/floats/registry");
+// ── Deterministic float resources (NO LLM) ────────────────────────────────
+
+export async function getFloatRegistry(): Promise<{
+  float_count: number;
+  map_data: MapData[];
+  networks: string[];
+  dacs: string[];
+  variables: string[];
+  statuses: string[];
+}> {
+  const { data } = await api.get("/api/v1/floats/registry");
   return data;
 }
 
-// Alias for bootstrap (preserves prior call sites)
-export async function getInitialRegistry(): Promise<any> {
+export async function getInitialRegistry(): Promise<{
+  float_count: number;
+  map_data: MapData[];
+  networks: string[];
+  dacs: string[];
+  variables: string[];
+  statuses: string[];
+}> {
   try {
     return await getFloatRegistry();
-  } catch (e) {
-    // graceful fallback (empty registry)
-    return { float_count: 0, map_data: [], networks: [], dacs: [], variables: [], statuses: [] };
+  } catch {
+    return {
+      float_count: 0,
+      map_data: [],
+      networks: [],
+      dacs: [],
+      variables: [],
+      statuses: [],
+    };
   }
 }
 
+/** GET /api/v1/floats/{id}/metadata — no LLM */
+export async function getFloatMetadata(floatId: string): Promise<{
+  float_info: FloatRegistryInfo;
+  map_data: MapData[];
+}> {
+  const { data } = await api.get(`/api/v1/floats/${encodeURIComponent(floatId)}/metadata`);
+  return data;
+}
+
+/** GET /api/v1/floats/{id}/trajectory — full cycle history, no LLM */
+export async function getFloatTrajectory(floatId: string): Promise<{
+  float_id: string;
+  cycle_count: number;
+  map_data: MapData[];
+  distance_km: number | null;
+  date_range: { min?: string | null; max?: string | null };
+}> {
+  const { data } = await api.get(
+    `/api/v1/floats/${encodeURIComponent(floatId)}/trajectory`
+  );
+  return data;
+}
+
+/** GET /api/v1/floats/{id}/latest-profile — plot only, no LLM */
+export async function getFloatLatestProfile(floatId: string): Promise<{
+  float_id: string;
+  intent: string;
+  message: string;
+  figure: PlotlyFigure | null;
+  figures: PlotlyFigure[] | null;
+  data_summary: DataSummary;
+  map_data: MapData[];
+}> {
+  const { data } = await api.get(
+    `/api/v1/floats/${encodeURIComponent(floatId)}/latest-profile`
+  );
+  return data;
+}
 
 export function getErrorMessage(error: unknown): string {
   if (error instanceof AxiosError) {

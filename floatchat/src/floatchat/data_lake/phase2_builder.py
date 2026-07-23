@@ -179,6 +179,9 @@ def load_index_csv(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+# ── NetCDF downloading ──────────────────────────────────────────────────── #
+
+
 def _classify_region(lat: float, lon: float) -> str:
     """Classify coordinate into India sub-region."""
     if point_in_region(lon, lat, "arabian_sea"):
@@ -187,8 +190,6 @@ def _classify_region(lat: float, lon: float) -> str:
         return "bay_of_bengal"
     return "indian_ocean"
 
-
-# ── NetCDF downloading ──────────────────────────────────────────────────── #
 
 def download_netcdf(file_path: str, dest_dir: Path, client: httpx.Client | None = None) -> Path | None:
     """Download a single NetCDF file from GDAC to local storage.
@@ -479,7 +480,6 @@ class Phase2DataLakeBuilder:
         with ckpt.open("a") as f:
             f.write(f"{float_id},{cycle_number}\n")
 
-    # ── Build pipeline ─────────────────────────────────────────────── #
 
     def run(self, max_profiles: int = 0, skip_download: bool = False) -> None:
         """Run the full ETL pipeline.
@@ -916,6 +916,7 @@ class Phase2DataLakeBuilder:
             fm["profile_count"] = sum(
                 1 for p in self.profile_records if p["float_id"] == float_id
             )
+
 
     # ── Step 4: Build float_registry (with three-way status) ────────── #
 

@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useCallback, useState, useEffect } from "react";
+import { useMemo, useCallback, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageSquare, X } from "lucide-react";
+import { MessageSquare, X, BarChart3 } from "lucide-react";
 
 import { MainLayout } from "@/components/Layout/MainLayout";
 import { Header } from "@/components/Layout/Header";
@@ -36,6 +36,8 @@ export default function HomePage() {
     onSelectSuggestion,
     selectedFloat,
     setSelectedFloat,
+    floatInfo: authoritativeFloatInfo,
+    isLoadingMetadata,
     currentMapData,
     mode,
     chatOpen,
@@ -45,10 +47,16 @@ export default function HomePage() {
     isLoadingCycles,
     highlightCycle,
     setHighlightCycle,
+    trajectoryVisible,
+    showTrajectory,
+    loadLatestProfile,
     plotItems,
     plotDrawerOpen,
     setPlotDrawerOpen,
     togglePlotPin,
+    plotFloatIds,
+    plotSelectedFloat,
+    setPlotSelectedFloat,
     filters,
     setFilters,
     filteredMapData,
@@ -57,54 +65,54 @@ export default function HomePage() {
     floatSearch,
     setFloatSearch,
     submitFloatSearch,
-    loadCycleHistory,
+    isFloatFocusMode,
   } = useChat();
 
-  // Local state for metadata loading
-  const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
-  // Cycle table expand state
   const [cycleTableExpanded, setCycleTableExpanded] = useState(false);
 
-  // Get the most recent assistant message
   const lastAssistantMessage = useMemo(() => {
     return [...messages].reverse().find((m) => m.role === "assistant");
   }, [messages]);
 
-  // Get float info from the most recent response
+  // Prefer REST metadata. While loading, show a minimal stub WITHOUT
+  // inventing first/last profile dates or profile_count from a single marker.
   const floatInfo: FloatRegistryInfo | null = useMemo(() => {
-    const fromMsg = lastAssistantMessage?.summary?.float_info ?? null;
-    if (fromMsg) return fromMsg;
+    if (authoritativeFloatInfo) return authoritativeFloatInfo;
 
-    // Fallback: derive immediately from currentMapData on first select (no second click)
+    // Only build a minimal stub so the panel can open; dates/counts stay empty
+    // until REST metadata arrives (prevents "both dates = last report" bug).
     if (selectedFloat && currentMapData.length > 0) {
-      const match = currentMapData.find((m: any) => m.float_id === selectedFloat);
+      const match =
+        [...currentMapData].reverse().find((m) => m.float_id === selectedFloat) ||
+        currentMapData.find((m) => m.float_id === selectedFloat);
       if (match) {
         return {
           float_id: match.float_id,
+          found: true,
           wmo_id: match.wmo_id || match.float_id,
           dac: match.dac || "",
           network: match.network || "Core Argo",
           institution: match.dac || "",
           platform_type: "",
-          profiler_type: "",
-          manufacturer: "",
-          first_profile_date: match.profile_date || null,
-          last_report_date: match.profile_date || null,
+          profiler_type: match.profiler_type || "",
+          manufacturer: match.manufacturer || "",
+          // Intentionally null — do NOT copy marker.profile_date here
+          first_profile_date: null,
+          last_report_date: null,
           profile_count: 0,
-          status: match.status || "active",
+          status: match.status || "unknown",
           sensors: match.variables || [],
           battery_status: "",
           battery_percentage: null,
           battery_voltage: null,
           last_lat: match.latitude,
           last_lon: match.longitude,
-        } as any;
+        } as FloatRegistryInfo;
       }
     }
     return null;
-  }, [lastAssistantMessage, selectedFloat, currentMapData]);
+  }, [authoritativeFloatInfo, selectedFloat, currentMapData]);
 
-  // Radius center for map
   const radiusCenter = useMemo(
     () =>
       lastAssistantMessage?.summary?.center ??
@@ -114,22 +122,17 @@ export default function HomePage() {
   );
   const radiusKm = lastAssistantMessage?.summary?.radius_km ?? null;
 
-  // Handlers for Metadata Inspector
+  // View Trajectory — only draws path when user clicks the button
   const handleViewTrajectory = useCallback(() => {
-    if (selectedFloat) {
-      loadCycleHistory(selectedFloat);
-      // Send trajectory query
-      sendMessage(`Show trajectory of float ${selectedFloat}`);
-    }
-  }, [selectedFloat, loadCycleHistory, sendMessage]);
+    showTrajectory();
+  }, [showTrajectory]);
 
   const handleViewLatestProfile = useCallback(() => {
     if (selectedFloat) {
-      // Explicit reliable trigger: force chat context + latest profile
-      setChatOpen(false); // ensure metadata is visible or will be restored
-      sendMessage(`Show latest profile for float ${selectedFloat}`);
+      setChatOpen(false);
+      loadLatestProfile();
     }
-  }, [selectedFloat, sendMessage, setChatOpen]);
+  }, [selectedFloat, loadLatestProfile, setChatOpen]);
 
   const handleDownloadMetadata = useCallback(() => {
     if (floatInfo) {
@@ -162,30 +165,29 @@ export default function HomePage() {
     }
   }, [floatInfo]);
 
-  // Handle cycle selection from CycleHistory
   const handleSelectCycle = useCallback(
     (cycleNumber: number | null) => {
       setHighlightCycle(cycleNumber);
-      // If cycle is selected, we could zoom the map to that point
-      // This would require additional map state management
     },
     [setHighlightCycle]
   );
 
-  // Open chat overlay
+  /** Trajectory point click → highlight + scroll cycle table */
+  const handleSelectTrajectoryPoint = useCallback(
+    (cycleNumber: number | null) => {
+      setHighlightCycle(cycleNumber);
+    },
+    [setHighlightCycle]
+  );
+
   const handleOpenChat = useCallback(() => {
     setChatOpen(true);
   }, [setChatOpen]);
 
-  // Close chat overlay
   const handleCloseChat = useCallback(() => {
     setChatOpen(false);
   }, [setChatOpen]);
 
-  // Metadata + Cycle History now open on FIRST click via handleSelectFloat + floatInfo fallback.
-  // Removed auto-sendMessage useEffect to prevent second-click requirement and race conditions.
-
-  // Workspace content - Chat or Metadata
   const workspaceContent = useMemo(() => {
     if (mode === "metadata" && selectedFloat && floatInfo) {
       return (
@@ -194,7 +196,7 @@ export default function HomePage() {
           onViewTrajectory={handleViewTrajectory}
           onViewLatestProfile={handleViewLatestProfile}
           onDownloadMetadata={handleDownloadMetadata}
-          isLoading={isLoadingMetadata}
+          isLoading={isLoadingMetadata || isLoadingCycles}
         />
       );
     }
@@ -220,9 +222,9 @@ export default function HomePage() {
     handleViewLatestProfile,
     handleDownloadMetadata,
     isLoadingMetadata,
+    isLoadingCycles,
   ]);
 
-  // Sidebar with scientific filters
   const sidebar = (
     <SidebarFilters
       filters={filters}
@@ -237,7 +239,6 @@ export default function HomePage() {
     />
   );
 
-  // Render the layout
   return (
     <>
       <MainLayout
@@ -248,6 +249,16 @@ export default function HomePage() {
             onFloatSearchChange={setFloatSearch}
             onFloatSearchSubmit={submitFloatSearch}
             isLoading={isLoading}
+            plotCount={plotItems.length}
+            plotsOpen={plotDrawerOpen}
+            onTogglePlots={() => setPlotDrawerOpen(!plotDrawerOpen)}
+            isFloatFocusMode={isFloatFocusMode}
+            focusFloatId={
+              // Show focused float id even before marker click (pin only)
+              selectedFloat ||
+              (isFloatFocusMode && filteredMapData[0]?.float_id) ||
+              null
+            }
           />
         }
         sidebar={sidebar}
@@ -259,6 +270,10 @@ export default function HomePage() {
             onDrillDown={(q) => sendMessage(q)}
             radiusCenter={radiusCenter}
             radiusKm={radiusKm}
+            focusMode={isFloatFocusMode}
+            trajectoryVisible={trajectoryVisible}
+            highlightedCycle={highlightCycle}
+            onSelectTrajectoryPoint={handleSelectTrajectoryPoint}
           />
         }
         workspace={workspaceContent}
@@ -303,11 +318,33 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Chat Overlay (when in metadata mode and chat is open) */}
+      {/* Scientific Plots reopen chip */}
+      <AnimatePresence>
+        {plotItems.length > 0 && !plotDrawerOpen && (
+          <motion.button
+            initial={{ y: 24, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 24, opacity: 0 }}
+            transition={{ type: "spring", damping: 18, stiffness: 220 }}
+            onClick={() => setPlotDrawerOpen(true)}
+            className="fixed bottom-6 left-6 z-[500] flex items-center gap-2 px-4 py-2.5 rounded-full bg-white border border-ocean-200 shadow-lg shadow-ocean-500/15 hover:bg-ocean-50 hover:border-ocean-300 cursor-pointer"
+            title="Reopen Scientific Plots"
+          >
+            <BarChart3 className="w-4 h-4 text-ocean-600" />
+            <span className="text-sm font-semibold text-slate-700">
+              Scientific Plots
+            </span>
+            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-ocean-100 text-ocean-700 border border-ocean-200">
+              {plotItems.length}
+            </span>
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      {/* Chat Overlay */}
       <AnimatePresence>
         {mode === "metadata" && chatOpen && (
           <>
-            {/* Backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -316,7 +353,6 @@ export default function HomePage() {
               onClick={handleCloseChat}
             />
 
-            {/* Chat Panel */}
             <motion.div
               initial={{ x: "100%", opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
@@ -324,13 +360,17 @@ export default function HomePage() {
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
               className="fixed top-0 right-0 bottom-0 w-[400px] max-w-[90vw] z-[850] bg-white/98 backdrop-blur-xl border-l border-slate-200 shadow-[-20px_0_60px_-10px_rgba(0,0,0,0.15)] flex flex-col"
             >
-              {/* Chat Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
                 <div className="flex items-center gap-2">
                   <MessageSquare className="w-4 h-4 text-ocean-400" />
                   <span className="text-sm font-semibold text-slate-700">
                     AI Assistant
                   </span>
+                  {context.floatId && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-ocean-50 text-ocean-600 border border-ocean-200 font-medium">
+                      Float {context.floatId}
+                    </span>
+                  )}
                 </div>
                 <button
                   onClick={handleCloseChat}
@@ -340,7 +380,6 @@ export default function HomePage() {
                 </button>
               </div>
 
-              {/* Chat Content */}
               <div className="flex-1 overflow-hidden">
                 <ChatPanel
                   messages={messages}
@@ -349,7 +388,6 @@ export default function HomePage() {
                   onScroll={onScroll}
                   onSelectSuggestion={(q) => {
                     sendMessage(q);
-                    // Keep chat open after sending
                   }}
                 />
               </div>
@@ -358,12 +396,14 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Plot Drawer (slides from left) */}
       <PlotDrawer
         isOpen={plotDrawerOpen}
         onClose={() => setPlotDrawerOpen(false)}
         plots={plotItems}
         onTogglePin={togglePlotPin}
+        floatIds={plotFloatIds}
+        selectedFloatId={plotSelectedFloat}
+        onSelectFloatId={setPlotSelectedFloat}
       />
     </>
   );

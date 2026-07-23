@@ -34,7 +34,7 @@ class QuerySpec(BaseModel):
         default=None,
         description=(
             "Named region or place. Must be one of: "
-            "arabian_sea, bay_of_bengal, indian_ocean. "
+            "arabian_sea, bay_of_bengal, equatorial_indian_ocean, southern_indian_ocean, indian_ocean (alias for all IO). "
             "Or a place name for geocoding. Null if not specified."
         ),
     )
@@ -148,6 +148,13 @@ class QuerySpec(BaseModel):
             "bay_of_bengal": "bay_of_bengal",
             "bengal": "bay_of_bengal",
             "bob": "bay_of_bengal",
+            "equatorial_indian_ocean": "equatorial_indian_ocean",
+            "equatorial_io": "equatorial_indian_ocean",
+            "tropical_indian_ocean": "equatorial_indian_ocean",
+            "southern_indian_ocean": "southern_indian_ocean",
+            "south_indian_ocean": "southern_indian_ocean",
+            "southern_io": "southern_indian_ocean",
+            # Query alias — expand_region_filter unions all four leaves.
             "indian_ocean": "indian_ocean",
             "io": "indian_ocean",
             "north_indian_ocean": "indian_ocean",
