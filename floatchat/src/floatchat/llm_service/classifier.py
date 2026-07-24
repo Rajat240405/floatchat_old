@@ -255,7 +255,37 @@ class QueryClassifier:
     def __init__(self, llm_service: AbstractLLMService) -> None:
         self._llm = llm_service
 
-    def classify(self, message: str) -> QueryType:
+    @staticmethod
+    def _active_scientific_context(context: object | None) -> bool:
+        if context is None:
+            return False
+        last_intent = getattr(context, "last_intent", None)
+        scientific_intents = {
+            "profile_plot", "time_series", "hovmoller", "ts_diagram",
+            "comparison_plot", "comparison", "trajectory",
+        }
+        return bool(
+            last_intent in scientific_intents
+            and (
+                getattr(context, "last_float_id", None)
+                or getattr(context, "last_profile_number", None)
+                or getattr(context, "last_variables", None)
+                or getattr(context, "last_response_summary", None)
+            )
+        )
+
+    @staticmethod
+    def _explicit_out_of_domain(message: str) -> bool:
+        text = message.lower()
+        return any(pattern.search(text) for pattern in _OOD_TRIGGERS) or bool(
+            re.search(
+                r"\b(python|javascript|java|code|script|algorithm|recipe|cook|sort.*array|array.*sort)\b",
+                text,
+                re.IGNORECASE,
+            )
+        )
+
+    def classify(self, message: str, conversation_context: object | None = None) -> QueryType:
         if not message or not message.strip():
             return "SMALL_TALK"
 
@@ -264,6 +294,13 @@ class QueryClassifier:
                 logger.debug("Rule-based SMALL_TALK: %r", message)
                 return "SMALL_TALK"
             if _is_out_of_domain(message):
+                # Generic question forms are ambiguous in isolation. When a
+                # scientific profile is active, route them into the data
+                # conversation unless an explicit out-of-domain trigger is
+                # present. This is state-based, not phrase-list based.
+                if self._active_scientific_context(conversation_context) and not self._explicit_out_of_domain(message):
+                    logger.info("Active scientific context overrides ambiguous OOD classification")
+                    return "DATA_QUERY"
                 logger.debug("Rule-based OUT_OF_DOMAIN: %r", message)
                 return "OUT_OF_DOMAIN"
             if _is_knowledge_query(message):

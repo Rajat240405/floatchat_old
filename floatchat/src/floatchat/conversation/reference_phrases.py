@@ -58,6 +58,9 @@ _FLOAT_REF_PATTERNS = [
     re.compile(r"\bsame\s+float\b", re.IGNORECASE),
     re.compile(r"\bthat\s+float\b", re.IGNORECASE),
     re.compile(r"\bthis\s+float\b", re.IGNORECASE),
+    re.compile(r"\bprevious\s+(?:selected\s+)?float\b", re.IGNORECASE),
+    re.compile(r"\blast\s+float\b", re.IGNORECASE),
+    re.compile(r"\bselected\s+float\b", re.IGNORECASE),
 ]
 
 # General reference phrases → inherit ALL context fields
@@ -73,6 +76,13 @@ _GENERAL_REF_PATTERNS = [
     # Phase 7: operational follow-ups that implicitly reference previous context
     re.compile(r"\b(?:latest|newest|most recent|recent)\s+(?:float|profile|cycle|data)\b", re.IGNORECASE),
     re.compile(r"\b(?:latest|newest)\s+float\b", re.IGNORECASE),
+    # Scientific follow-ups refer to the active displayed profile without
+    # repeating its float ID or variables.
+    re.compile(r"\bthis\s+profile\b", re.IGNORECASE),
+    re.compile(r"\bthese\s+(?:observations|findings|results)\b", re.IGNORECASE),
+    re.compile(r"\b(?:explain|summari[sz]e|interpret)\s+(?:this|these)\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+does\s+this\s+suggest\b", re.IGNORECASE),
+    re.compile(r"\bwhy\s+is\s+(?:the\s+)?(?:oxygen|temperature|salinity)\s+(?:low|high)\s+here\b", re.IGNORECASE),
 ]
 
 # Compound reference patterns — when a specific reference ("same region") is

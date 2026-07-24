@@ -23,6 +23,7 @@ class AbstractConversationManager(ABC):
         session_id: str | None,
         intent: ParsedIntent,
         message: str | None = None,
+        in_place: bool = False,
     ) -> ParsedIntent:
         """Return a new :class:`ParsedIntent` with missing fields filled from context.
 

@@ -7,13 +7,18 @@ Priority 1B: Query normalizer uses FallbackQueryNormalizer (deterministic)
 by default. OllamaQueryNormalizer is DEPRECATED for hot-path use.
 """
 
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
 
 from floatchat.config import settings
 from floatchat.conversation.base import AbstractConversationManager
+from floatchat.data_lake.base import AbstractDataLake
+from floatchat.data_lake.duckdb_lake import DuckDBDataLake
 from floatchat.conversation.memory import InMemoryConversationManager
+from floatchat.entity_extractor.extractor import LLMIntentCompiler
+from floatchat.intent_resolution.resolver import IntentResolver
 from floatchat.intent_parser.base import AbstractIntentParser
 from floatchat.intent_parser.regex import RegexIntentParser
 from floatchat.llm_service.base import AbstractLLMService
@@ -39,10 +44,12 @@ from floatchat.visualization_engine.profile import ProfileVisualizationEngine
 
 # Singleton caches (module-level for simplicity in MVP).
 _metadata_service: GDACMetadataService | None = None
+_data_lake: AbstractDataLake | None = None
 _repository_service: GDACRepositoryService | None = None
 _netcdf_reader: BGCNetCDFReader | None = None
 _viz_engine: ProfileVisualizationEngine | None = None
 _intent_parser: RegexIntentParser | None = None
+_intent_resolver: IntentResolver | None = None
 _query_engine: QueryEngine | None = None
 _llm_service: OllamaLLMService | None = None
 _extractor_llm_service: OllamaLLMService | None = None  # P2: provider-toggled extractor LLM
@@ -64,6 +71,24 @@ def get_metadata_service() -> AbstractMetadataService:
     if _metadata_service is None:
         _metadata_service = GDACMetadataService()
     return _metadata_service
+
+
+def get_data_lake() -> AbstractDataLake:
+    """Return the process-local DuckDB/Parquet service singleton."""
+    global _data_lake
+    if _data_lake is None:
+        if settings.data_lake_phase2_enabled:
+            phase2_root = Path(settings.data_lake_dir)
+            levels_root = phase2_root / "parquet" / "levels"
+            if levels_root.exists() and any(levels_root.rglob("*.parquet")):
+                _data_lake = DuckDBDataLake(phase2_root=phase2_root, use_phase2=True)
+        if _data_lake is None:
+            _data_lake = DuckDBDataLake(lake_root=Path(settings.data_lake_root))
+        # Warm the startup thread's reusable connection. Worker threads get
+        # their own thread-affine connection on first use.
+        if hasattr(_data_lake, "_get_connection"):
+            _data_lake._get_connection()
+    return _data_lake
 
 
 def get_repository_service() -> AbstractRepositoryService:
@@ -228,8 +253,11 @@ def get_query_engine(
         ScientificExplanationEngine,
         Depends(get_scientific_explanation_engine),
     ],
+    data_lake: AbstractDataLake = Depends(get_data_lake),
 ) -> QueryEngine:
     global _query_engine
+    if not hasattr(data_lake, "query"):
+        data_lake = get_data_lake()
     if _query_engine is None:
         _query_engine = QueryEngine(
             metadata,
@@ -237,7 +265,35 @@ def get_query_engine(
             reader,
             viz,
             explanation_engine=explanation_engine,
+            data_lake=data_lake,
         )
+    return _query_engine
+
+
+def initialize_runtime_services() -> None:
+    """Construct the long-lived application runtime graph once at startup."""
+    explanation_engine = get_scientific_explanation_engine(
+        get_scientific_feature_extractor(),
+        get_scientific_prompt_builder(),
+        get_scientific_narrator(get_scientific_llm_service()),
+        get_narrator_output_parser(),
+        get_verification_guard(),
+    )
+    get_query_engine(
+        get_metadata_service(),
+        get_repository_service(),
+        get_netcdf_reader(),
+        get_visualization_engine(),
+        explanation_engine,
+        get_data_lake(),
+    )
+
+
+def get_runtime_query_engine() -> QueryEngine:
+    """Return the startup-initialized QueryEngine for deterministic routes."""
+    global _query_engine
+    if _query_engine is None:
+        initialize_runtime_services()
     return _query_engine
 
 
@@ -282,6 +338,23 @@ def get_conversation_manager() -> AbstractConversationManager:
     if _conversation_manager is None:
         _conversation_manager = InMemoryConversationManager()
     return _conversation_manager
+
+
+def get_intent_resolver(
+    parser: Annotated[AbstractIntentParser, Depends(get_intent_parser)],
+    conversation_manager: Annotated[
+        AbstractConversationManager, Depends(get_conversation_manager)
+    ],
+) -> IntentResolver:
+    global _intent_resolver
+    if _intent_resolver is None:
+        _intent_resolver = IntentResolver(
+            parser=parser,
+            compiler=LLMIntentCompiler(),
+            conversation_manager=conversation_manager,
+        )
+    return _intent_resolver
+
 
 
 def get_knowledge_base():

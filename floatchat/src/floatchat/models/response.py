@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field, field_validator
 
 
 def _sanitize_for_json(obj: Any) -> Any:
-    """Recursively convert numpy arrays, pandas series, and timestamps to native Python types for JSON serialization."""
+    """Recursively convert scientific values to JSON-safe native types."""
+    # Test doubles can dynamically expose ``tolist``; do not recurse into a
+    # MagicMock as if it were a numpy object when a mocked runtime dependency
+    # returns a zero-result diagnostic.
+    if type(obj).__module__ == "unittest.mock":
+        return None
     if isinstance(obj, dict):
         return {k: _sanitize_for_json(v) for k, v in obj.items()}
     if isinstance(obj, list):

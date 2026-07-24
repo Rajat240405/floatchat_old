@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     metadata_index_path: str = "/argo_bio-profile_index.txt.gz"
     metadata_cache_ttl_hours: int = 24
     enable_synthetic_index: bool = False
+    # GDAC metadata is optional at application runtime. Keep disabled for the
+    # DuckDB/Parquet-backed service; enable explicitly for the legacy remote
+    # fallback. Offline ETL loads GDAC metadata directly and is unaffected.
+    enable_gdac_runtime: bool = False
 
     # HTTP
     http_timeout: int = 30

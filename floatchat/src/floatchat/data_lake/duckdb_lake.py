@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -168,7 +169,11 @@ class DuckDBDataLake(AbstractDataLake):
             if not self._lake_root.exists():
                 logger.warning("Phase 2 levels directory does not exist: %s", self._lake_root)
 
-        self._conn: Any = None  # duckdb.DuckDBPyConnection — set lazily
+        # DuckDB connections are thread-affine. Reuse one connection per
+        # worker thread instead of sharing a connection concurrently.
+        self._conn: Any = None  # backwards-compatible primary connection handle
+        self._thread_connections = threading.local()
+        self._connection_lock = threading.Lock()
         self._availability_cache: dict[str, Any] | None = None
         logger.info(
             "PIPELINE lake_instance: created instance_id=%s root=%s use_phase2=%s",
@@ -448,23 +453,32 @@ class DuckDBDataLake(AbstractDataLake):
         return result.stats
 
     def _get_connection(self) -> Any:
-        """Lazily create and cache the DuckDB connection."""
-        if self._conn is None:
+        """Return the connection reused by the current worker thread."""
+        connection = getattr(self._thread_connections, "connection", None)
+        if connection is None:
             import duckdb
 
-            self._conn = duckdb.connect(database=":memory:")
-            logger.info(
-                "PIPELINE duckdb_connection: created lake_instance_id=%s connection_id=%s",
-                id(self),
-                id(self._conn),
-            )
+            with self._connection_lock:
+                connection = duckdb.connect(database=":memory:")
+                if self._conn is None:
+                    self._conn = connection
+                logger.info(
+                    "PIPELINE duckdb_connection: created lake_instance_id=%s "
+                    "connection_id=%s thread=%s",
+                    id(self),
+                    id(connection),
+                    threading.get_ident(),
+                )
+            self._thread_connections.connection = connection
         else:
             logger.debug(
-                "PIPELINE duckdb_connection: reused lake_instance_id=%s connection_id=%s",
+                "PIPELINE duckdb_connection: reused lake_instance_id=%s "
+                "connection_id=%s thread=%s",
                 id(self),
-                id(self._conn),
+                id(connection),
+                threading.get_ident(),
             )
-        return self._conn
+        return connection
 
     def _execute_query(
         self,
@@ -519,14 +533,35 @@ class DuckDBDataLake(AbstractDataLake):
         if criteria.profile_number is not None:
             _add("cycle_number = ?", criteria.profile_number)
 
-        # Priority 1C: NaN-safe variable presence filters
+        # Variable requirements are evaluated at profile scope below, not on
+        # individual level rows. TEMP and DOXY may be populated on different
+        # rows in a logical profile and must still qualify together.
         requested_vars = [v.upper() for v in criteria.variables]
-        for var in requested_vars:
-            where_parts.append(_variable_presence_filter(var))
-
         where_clause = " AND ".join(where_parts) if where_parts else "1=1"
+        profile_having = ""
+        if requested_vars:
+            requirements = [
+                f"bool_or({_variable_presence_filter(var)})"
+                for var in requested_vars
+            ]
+            profile_having = " HAVING " + " AND ".join(requirements)
         limit = max(criteria.limit, 1)
         parquet_pattern = (self._lake_root / "**" / "*.parquet").as_posix()
+
+        # Profile-level LIMIT: returns all depth levels per profile cycle.
+        # Older Phase 1 fixtures may not contain every Phase 2 BGC column;
+        # project missing optional columns as NULL without changing the query
+        # contract for current production Parquet.
+        try:
+            schema = conn.execute(
+                f"SELECT * FROM read_parquet('{parquet_pattern}', hive_partitioning=true) LIMIT 0"
+            ).description
+            available_columns = {column[0] for column in schema}
+        except Exception:
+            available_columns = set()
+
+        def _select_column(name: str) -> str:
+            return f"f.{name}" if name in available_columns else f"NULL AS {name}"
 
         # Profile-level LIMIT: returns all depth levels per profile cycle
         sql = (
@@ -536,9 +571,11 @@ class DuckDBDataLake(AbstractDataLake):
             f"    WHERE {where_clause}\n"
             f"),\n"
             f"selected_profiles AS (\n"
-            f"    SELECT DISTINCT float_id, cycle_number\n"
+            f"    SELECT float_id, cycle_number, max(date) AS profile_date\n"
             f"    FROM filtered\n"
-            f"    ORDER BY float_id, cycle_number\n"
+            f"    GROUP BY float_id, cycle_number\n"
+            f"    {profile_having}\n"
+            f"    ORDER BY profile_date DESC, float_id, cycle_number\n"
             f"    LIMIT {limit}\n"
             f")\n"
             "SELECT\n"
@@ -563,18 +600,18 @@ class DuckDBDataLake(AbstractDataLake):
             "    f.chla,\n"
             "    f.chla_qc,\n"
             "    f.chla_adjusted,\n"
-            "    f.bbp700,\n"
-            "    f.bbp700_qc,\n"
-            "    f.bbp700_adjusted,\n"
-            "    f.nitrate,\n"
-            "    f.nitrate_qc,\n"
-            "    f.nitrate_adjusted,\n"
-            "    f.ph_in_situ_total,\n"
-            "    f.ph_in_situ_total_qc,\n"
-            "    f.ph_in_situ_total_adjusted,\n"
-            "    f.downwelling_par,\n"
-            "    f.downwelling_par_qc,\n"
-            "    f.downwelling_par_adjusted,\n"
+            f"    {_select_column('bbp700')},\n"
+            f"    {_select_column('bbp700_qc')},\n"
+            f"    {_select_column('bbp700_adjusted')},\n"
+            f"    {_select_column('nitrate')},\n"
+            f"    {_select_column('nitrate_qc')},\n"
+            f"    {_select_column('nitrate_adjusted')},\n"
+            f"    {_select_column('ph_in_situ_total')},\n"
+            f"    {_select_column('ph_in_situ_total_qc')},\n"
+            f"    {_select_column('ph_in_situ_total_adjusted')},\n"
+            f"    {_select_column('downwelling_par')},\n"
+            f"    {_select_column('downwelling_par_qc')},\n"
+            f"    {_select_column('downwelling_par_adjusted')},\n"
             "    f.region_tag,\n"
             "    f.source_file,\n"
             "    f.dac\n"

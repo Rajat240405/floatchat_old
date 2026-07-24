@@ -127,6 +127,11 @@ export interface HealthResponse {
 export interface ChatResponse {
   intent: string;
   message: string;
+  telemetry?: {
+    requestStartMs: number;
+    apiResponseTimeMs: number;
+    jsonParseTimeMs: number;
+  };
   figure?: PlotlyFigure | null;
   figures?: PlotlyFigure[] | null;
   data_summary?: DataSummary;
@@ -162,6 +167,18 @@ export interface WorkspaceContext {
   variables: string[];
 }
 
+/** Client-side performance telemetry for one scientific plot request/render. */
+export interface PlotTelemetry {
+  requestStartMs: number;
+  apiResponseTimeMs: number;
+  jsonParseTimeMs: number;
+  plotlyRenderTimeMs?: number;
+  timeToFirstPlotRenderMs?: number;
+  traceCount: number;
+  pointCount: number;
+  figurePayloadKb: number;
+}
+
 /** A stacked scientific plot in the slide-out analysis drawer. */
 export interface PlotItem {
   id: string;
@@ -169,6 +186,7 @@ export interface PlotItem {
   title: string;
   figure: PlotlyFigure;
   pinned: boolean;
+  telemetry?: PlotTelemetry;
 }
 
 /** Scientific sidebar filter state. */

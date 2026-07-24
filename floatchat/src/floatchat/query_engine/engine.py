@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Query Engine orchestrator.
 
 Maps :class:`ParsedIntent` through the full pipeline and returns a
@@ -51,6 +53,8 @@ def _figure_metrics(figures: list[dict[str, Any]] | None) -> tuple[int, int, int
         data = figure.get("data", []) or []
         traces += len(data)
         for trace in data:
+            if not isinstance(trace, dict):
+                continue
             points += max(len(trace.get("x", []) or []), len(trace.get("y", []) or []))
         payload += len(json.dumps(figure, separators=(",", ":")).encode("utf-8"))
     return traces, points, payload
@@ -288,6 +292,7 @@ class QueryEngine:
         netcdf_reader: AbstractNetCDFReader,
         visualization_engine: AbstractVisualizationEngine,
         explanation_engine: ScientificExplanationEngine | None = None,
+        data_lake: AbstractDataLake | None = None,
     ) -> None:
         self.metadata = metadata_service
         self.repository = repository_service
@@ -297,8 +302,9 @@ class QueryEngine:
             explanation_engine if explanation_engine is not None else ScientificExplanationEngine()
         )
         self.planner = RetrievalPlanner()
-        # Phase 1: Optional data lake (lazy import to avoid hard dependency)
-        self._data_lake: AbstractDataLake | None = None
+        # Runtime lake is normally injected by the application composition
+        # root. Keeping lazy fallback preserves direct/test construction.
+        self._data_lake: AbstractDataLake | None = data_lake
 
     def execute(self, intent: ParsedIntent) -> ChatResponse:
         """Run the full pipeline for a single parsed intent.
@@ -626,7 +632,7 @@ class QueryEngine:
             or not info.get("institution")
             or str(info.get("institution", "")).strip() in ("", "unknown", "None")
         )
-        if _needs_gdac and self.metadata and settings.allow_remote_gdac_fallback:
+        if _needs_gdac and self.metadata and settings.allow_remote_gdac_fallback and settings.enable_gdac_runtime:
             logger.warning(
                 "GDAC metadata fallback triggered for float %s — "
                 "this is a remote HTTP call. Set FLOATCHAT_ALLOW_REMOTE_GDAC_FALLBACK=False to prevent.",
@@ -986,7 +992,7 @@ class QueryEngine:
                     logger.warning("Trajectory lake query failed: %s", exc)
 
         # Priority 1A: GDAC fallback ONLY when explicitly allowed
-        if df.empty and self.metadata and settings.allow_remote_gdac_fallback:
+        if df.empty and self.metadata and settings.allow_remote_gdac_fallback and settings.enable_gdac_runtime:
             logger.warning(
                 "GDAC trajectory fallback triggered for float %s — remote HTTP call.",
                 clean_fid,
@@ -1163,7 +1169,7 @@ class QueryEngine:
         lake = self._get_data_lake()
         if lake is None or not (lake.is_available() or lake.is_phase2_available()):
             # Priority 1A: Check if remote fallback is allowed
-            if settings.allow_remote_gdac_fallback:
+            if settings.allow_remote_gdac_fallback and settings.enable_gdac_runtime:
                 logger.warning(
                     "Data lake unavailable; FALLING BACK to GDAC pipeline — "
                     "this makes remote HTTP calls!"
@@ -1186,8 +1192,7 @@ class QueryEngine:
         # The cycle predicate is also applied inside DuckDB via criteria.
         query_limit = (
             1
-            if intent.profile_number is not None
-            or (intent.intent == "profile_plot" and intent.float_id)
+            if intent.profile_number is not None or intent.intent == "profile_plot"
             else settings.data_lake_max_profiles
         )
 
@@ -1363,17 +1368,31 @@ class QueryEngine:
         t_viz_end = time.perf_counter()
 
         # --- Per-variable figures for the redesigned stacked plot drawer --- #
-        # Additive: produces one standalone figure per variable (Temp, Salinity,
-        # Oxygen, Chlorophyll, ...). Falls back to None silently so the primary
-        # response is never affected by a drawer-render failure.
+        # A single-variable request already has exactly the figure needed by
+        # both the main response and the drawer. Reuse it instead of traversing
+        # the DataFrame and rebuilding an equivalent Plotly figure.
+        #
+        # For multi-variable requests, retain the combined main figure because
+        # the existing chat UI consumes response.figure, and additionally build
+        # one standalone figure per variable for the drawer.
         figures: list[dict] | None = None
-        per_var_fn = getattr(self.viz, "render_per_variable", None)
-        if callable(per_var_fn):
-            try:
-                figures = per_var_fn(intent, df) or None
-            except Exception as exc:
-                logger.warning("Per-variable figure render failed: %s", exc)
-                figures = None
+        if len(intent.variables) == 1 and figure is not None:
+            if isinstance(figure, dict):
+                figure.setdefault("variable", intent.variables[0])
+            figures = [figure]
+            logger.info(
+                "PIPELINE per_variable_plots: reused_combined_single_variable "
+                "variable=%s figures=1",
+                intent.variables[0],
+            )
+        else:
+            per_var_fn = getattr(self.viz, "render_per_variable", None)
+            if callable(per_var_fn):
+                try:
+                    figures = per_var_fn(intent, df) or None
+                except Exception as exc:
+                    logger.warning("Per-variable figure render failed: %s", exc)
+                    figures = None
 
         combined_metrics = _figure_metrics([figure] if figure else None)
         drawer_metrics = _figure_metrics(figures)
@@ -1409,11 +1428,28 @@ class QueryEngine:
         explanation = self.explanation_engine.generate_explanation(
             intent, [], intent.variables, data_summary, df=df
         )
+        # User-facing wording describes the scientific object being shown,
+        # not storage/query implementation details.
+        profile_date = None
+        if "date" in df.columns and not df["date"].isna().all():
+            profile_date = pd.to_datetime(df["date"].min()).strftime("%Y-%m-%d %H:%M UTC")
+        if intent.profile_number is not None:
+            cycle_text = f"Cycle {intent.profile_number}"
+        elif lake_result.unique_profiles == 1 and "cycle_number" in df.columns:
+            cycle_text = f"Cycle {int(df['cycle_number'].iloc[0])}"
+        else:
+            cycle_text = "the latest available profile"
+        selected_float_id = intent.float_id
+        if selected_float_id is None and "float_id" in df.columns and not df.empty:
+            selected_float_id = str(df["float_id"].iloc[0])
+        float_text = f" for Float {selected_float_id}" if selected_float_id else ""
+        date_text = f" collected on {profile_date}" if profile_date else ""
         base_message = (
-            f"Retrieved {lake_result.unique_profiles} profile(s) with "
-            f"{lake_result.total_measurements} total measurements "
-            f"for variables {', '.join(intent.variables)} from the data lake [local only, no GDAC HTTP]."
+            f"Showing {', '.join(intent.variables) or 'the requested variables'} "
+            f"profile{float_text}, {cycle_text}{date_text}."
         )
+        if lake_result.unique_profiles > 1:
+            base_message += " Additional profile history is available for comparison."
         final_message = base_message + "\n\n" + explanation
 
         data_summary.update({
@@ -1611,10 +1647,20 @@ class QueryEngine:
                 return None
         return self._data_lake
 
-    @staticmethod
-    def _build_map_data_from_lake(df: pd.DataFrame) -> list[MapData]:
-        """Build map markers from lake DataFrame."""
+    def _build_map_data_from_lake(self, df: pd.DataFrame) -> list[MapData]:
+        """Build map markers from lake DataFrame and registry status."""
         markers: list[MapData] = []
+        registry_status: dict[str, str] = {}
+        try:
+            registry = self._data_lake.get_float_registry() if self._data_lake else pd.DataFrame()
+            if registry is not None and not registry.empty:
+                for _, registry_row in registry.iterrows():
+                    fid = str(registry_row.get("float_id", ""))
+                    status = str(registry_row.get("status", "") or "").strip().lower()
+                    if fid and status and status not in {"unknown", "none", "nan"}:
+                        registry_status[fid] = status
+        except Exception as exc:
+            logger.debug("Float registry status lookup failed: %s", exc)
         seen: set[str] = set()
         # Pre-compute which floats carry any BGC variable, for Network derivation.
         _BGC_VAR_MARKERS = ("DOXY", "CHLA", "NITRATE", "BBP", "PH_IN_SITU", "DOWNWELLING", "DOWN_IRR")
@@ -1645,6 +1691,13 @@ class QueryEngine:
                     p_num = int(row["cycle_number"])
                 except Exception:
                     pass
+            status = registry_status.get(fid)
+            if status is None and date_val is not None and pd.notna(date_val):
+                report_ts = pd.Timestamp(date_val)
+                if report_ts.tzinfo is None:
+                    report_ts = report_ts.tz_localize("UTC")
+                age_days = (pd.Timestamp.now(tz="UTC") - report_ts).days
+                status = "active" if age_days <= 365 else "inactive"
             markers.append(
                 MapData(
                     float_id=fid,
@@ -1655,6 +1708,7 @@ class QueryEngine:
                     dac=str(row.get("dac", "")),
                     variables=[],
                     selected=False,
+                    status=status or "inactive",
                     network="BGC Argo" if fid in bgc_floats else "Core Argo",
                     wmo_id=fid,
                 )

@@ -14,13 +14,14 @@ import re
 import time
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from pathlib import Path
 
 from floatchat.api.dependencies import (
     get_conversation_manager,
     get_intent_parser,
+    get_intent_resolver,
     get_knowledge_base,
     get_llm_service,
     get_query_classifier,
@@ -37,6 +38,7 @@ from floatchat.entity_extractor.extractor import (
 from floatchat.entity_extractor.temporal_resolver import resolve_temporal_filter
 from floatchat.exceptions import FloatChatError, IntentParseError
 from floatchat.intent_parser.base import AbstractIntentParser
+from floatchat.intent_resolution.resolver import IntentResolver
 from floatchat.llm_service.base import AbstractLLMService
 from floatchat.llm_service.classifier import QueryClassifier
 from floatchat.llm_service.knowledge_base import KnowledgeBase
@@ -68,6 +70,51 @@ class ChatRequest(BaseModel):
         default=None,
         description="Client-generated session ID for conversational continuity.",
     )
+
+
+def _is_active_scientific_followup(message: str, context: Any | None) -> bool:
+    """Return whether an ambiguous message refers to the active profile.
+
+    This is deliberately state-based. It does not enumerate individual
+    follow-up sentences. Explicit definition/knowledge questions remain on
+    the knowledge path unless they contain a deictic reference to the active
+    observations.
+    """
+    if context is None:
+        return False
+    if getattr(context, "last_intent", None) not in {
+        "profile_plot", "time_series", "hovmoller", "ts_diagram",
+        "comparison_plot", "comparison",
+    }:
+        return False
+    if not (
+        getattr(context, "last_float_id", None)
+        or getattr(context, "last_profile_number", None)
+        or getattr(context, "last_variables", None)
+        or getattr(context, "last_response_summary", None)
+    ):
+        return False
+
+    text = message.lower()
+    independent_scope = bool(
+        re.search(r"\b(?:float|wmo)\s*\d{5,}\b|\b\d{7}\b", text)
+        or re.search(r"\b(?:in|near|around|within|from)\b", text)
+        or re.search(r"[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?", text)
+        or re.search(r"\b(?:19|20)\d{2}\b", text)
+    )
+    if independent_scope:
+        return False
+
+    definition_request = re.search(
+        r"\b(?:what\s+is|what\s+are|define|explain)\b", text
+    )
+    deictic_reference = re.search(
+        r"\b(?:this|these|here|it|observations?|findings?|results?)\b", text
+    )
+    if definition_request and not deictic_reference:
+        return False
+    return True
+
 
 
 def _check_critical_fields(intent: ParsedIntent, has_context: bool) -> str | None:
@@ -742,6 +789,7 @@ def chat(
     classifier: Annotated[QueryClassifier, Depends(get_query_classifier)],
     llm_service: Annotated[AbstractLLMService, Depends(get_llm_service)],
     intent_parser: Annotated[AbstractIntentParser, Depends(get_intent_parser)],
+    intent_resolver: Annotated[object, Depends(get_intent_resolver)],
     query_engine: Annotated[QueryEngine, Depends(get_query_engine)],
     conversation_manager: Annotated[
         AbstractConversationManager, Depends(get_conversation_manager)
@@ -768,11 +816,35 @@ def chat(
     try:
         # --- Step 1: Classify ------------------------------------------- #
         classify_t0 = time.perf_counter()
-        query_type = QueryClassifier.classify(classifier, request.message)
+        prior_context = (
+            conversation_manager.get_context(request.session_id)
+            if request.session_id
+            else None
+        )
+        try:
+            query_type = QueryClassifier.classify(
+                classifier,
+                request.message,
+                conversation_context=prior_context,
+            )
+        except TypeError:
+            # Preserve compatibility with injected/test classifiers that still
+            # implement the original one-argument contract.
+            query_type = QueryClassifier.classify(classifier, request.message)
         classify_t1 = time.perf_counter()
         logger.info(
             "Query classified as %s in %.3fs", query_type, classify_t1 - classify_t0
         )
+
+        active_scientific_followup = _is_active_scientific_followup(
+            request.message, prior_context
+        )
+        if active_scientific_followup:
+            logger.info(
+                "Active scientific context takes precedence over classifier result %s",
+                query_type,
+            )
+            query_type = "DATA_QUERY"
 
         # --- Step 1.5: Conversational Override -------------------------- #
         # Priority 2: Also override OUT_OF_DOMAIN when the message contains
@@ -849,100 +921,27 @@ def chat(
             _log_response(response, request_t0)
             return response
 
-        # --- Step 5: DATA_QUERY — parse + merge context + pipeline ------ #
+        # --- Step 5: DATA_QUERY — canonical intent pipeline ------------- #
+        # Regex, optional compiler fallback, validation, and context enrichment
+        # are now owned by one resolver. The route only plans and executes.
         try:
-            parsed = intent_parser.parse(request.message)
+            intent = intent_resolver.resolve(request.message, request.session_id)
         except IntentParseError as exc:
-            logger.warning(
-                "Initial parse failed for %r: %s. Attempting conversational recovery.",
-                request.message,
-                exc.message,
+            ctx = (
+                conversation_manager.get_context(request.session_id)
+                if request.session_id
+                else None
             )
-            recovered = _try_conversational_recovery(
-                request.message,
-                request.session_id,
-                conversation_manager,
-                intent_parser,
+            logger.info("Canonical intent resolution failed: %s", exc.message)
+            return ChatResponse(
+                intent="unknown",
+                message=_build_suggestion_message(ctx),
+                figure=None,
+                data_summary={},
+                map_data=[],
             )
-            if recovered is not None:
-                logger.info(
-                    "Conversational recovery succeeded: vars=%s region=%s float=%s",
-                    recovered.variables,
-                    recovered.region,
-                    recovered.float_id,
-                )
-                parsed = recovered
-            else:
-                # Priority 3 fix: Try LLM entity extraction as a last resort
-                # before giving up. The regex parser may fail on complex queries
-                # like "alive floats near Goa during last monsoon" where the
-                # gazetteer can't resolve a place name that includes temporal tokens.
-                logger.info(
-                    "Conversational recovery failed — trying LLM entity extraction as last resort"
-                )
-                llm_recovered = _try_llm_extraction_as_recovery(
-                    request.message,
-                    request.session_id,
-                    conversation_manager,
-                )
-                if llm_recovered is not None:
-                    logger.info(
-                        "LLM extraction recovery succeeded: intent=%s vars=%s region=%s float=%s",
-                        llm_recovered.intent,
-                        llm_recovered.variables,
-                        llm_recovered.region,
-                        llm_recovered.float_id,
-                    )
-                    parsed = llm_recovered
-                else:
-                    ctx = (
-                        conversation_manager.get_context(request.session_id)
-                        if request.session_id
-                        else None
-                    )
-                    suggestion = _build_suggestion_message(ctx)
-                    logger.info("All recovery attempts failed; returning suggestions")
-                    return ChatResponse(
-                        intent="unknown",
-                        message=suggestion,
-                        figure=None,
-                        data_summary={},
-                        map_data=[],
-                    )
-
-        # Priority 2 (P0 fix): The raw user message is passed explicitly to
-        # merge_context below so reference-phrase detection is robust against
-        # the LLM extractor / metadata override reconstructing ParsedIntent
-        # (which would otherwise drop a smuggled _original_message attribute).
-
-        # Priority 2: If the parser detected metadata_lookup but the user's
-        # message contains reference phrases like "it", ensure float_id
-        # inheritance from context works correctly.
-        ref_check = detect_reference_phrases(request.message)
-        if ref_check.is_metadata_followup and parsed.intent != "metadata_lookup":
-            logger.info(
-                "Priority 2: Overriding intent %s → metadata_lookup "
-                "for message with metadata follow-up patterns",
-                parsed.intent,
-            )
-            parsed = ParsedIntent(intent="metadata_lookup")
-
-        # --- Priority 3: LLM Entity Extraction (fallback only) --- #
-        # If the deterministic parser produced an intent but critical slots
-        # are missing (no variables, no float_id, no region), try ONE call
-        # to the small LLM model to extract structured entities.
-        parsed = _try_llm_extraction(
-            request.message, parsed, request.session_id, conversation_manager,
-        )
-
-        # P0 fix: pass the raw message explicitly so merge_context detects
-        # reference phrases even though _try_llm_extraction may have rebuilt
-        # a fresh ParsedIntent (dropping any smuggled attribute).
-        intent = conversation_manager.merge_context(
-            request.session_id, parsed, message=request.message
-        )
         logger.info(
-            "Merged intent for execution: intent=%s vars=%s region=%s year=%s float=%s profile=%s",
+            "Resolved canonical intent: intent=%s vars=%s region=%s year=%s float=%s profile=%s",
             intent.intent,
             intent.variables,
             intent.region,
@@ -951,15 +950,13 @@ def chat(
             intent.profile_number,
         )
 
-        # Phase 2-5: Generate operation plan — the single source of truth.
         from floatchat.retrieval_planner.operation_planner import plan_from_intent
-        plan = plan_from_intent(intent, message=request.message)
+        plan = plan_from_intent(
+            intent,
+            message="" if active_scientific_followup else request.message,
+        )
         logger.info("Phase 5 plan: %s", plan)
 
-        # Phase 5: Mixed query execution (knowledge + data).
-        # When the plan is mixed, execute both explain_topic and data ops.
-        # This is the ONLY place where execution deviates from the old
-        # intent-based pipeline. Non-mixed queries are unchanged.
         if plan.is_mixed and plan.has("explain_topic"):
             response = _execute_mixed_plan(
                 plan, intent, request, query_engine,
@@ -969,11 +966,12 @@ def chat(
             _log_response(response, request_t0)
             return response
 
-        # Phase 3: Intent-specific critical field check.
-        # If essential fields are missing, ask the user instead of executing
-        # with incomplete data (prevents wrong/empty results).
         clarification = _check_critical_fields(
-            intent, has_context=bool(request.session_id and conversation_manager.get_context(request.session_id))
+            intent,
+            has_context=bool(
+                request.session_id
+                and conversation_manager.get_context(request.session_id)
+            ),
         )
         if clarification:
             logger.info("Returning clarification: %s", clarification[:80])
@@ -1364,21 +1362,10 @@ class FloatProfileAPIResponse(BaseModel):
 
 
 def _get_lake():
-    """Shared DuckDB lake helper for deterministic endpoints."""
-    from floatchat.data_lake.duckdb_lake import DuckDBDataLake
-    from floatchat.config import settings
+    """Return the application-scoped deterministic data-lake singleton."""
+    from floatchat.api.dependencies import get_data_lake
 
-    if settings.data_lake_phase2_enabled:
-        phase2_dir = Path(settings.data_lake_dir)
-        lake = DuckDBDataLake(
-            phase2_root=phase2_dir,
-            use_phase2=True,
-        )
-        if lake.is_phase2_available():
-            return lake
-
-    lake_root = Path(settings.data_lake_root)
-    return DuckDBDataLake(lake_root=lake_root)
+    return get_data_lake()
 
 
 @router.get("/floats/{float_id}/metadata", response_model=FloatMetadataAPIResponse)
@@ -1717,23 +1704,9 @@ def get_float_latest_profile(float_id: str):
     prev_flag = getattr(settings, "sci_narrator_enabled", True)
     settings.sci_narrator_enabled = False
     try:
-        engine = QueryEngine(
-            GDACMetadataService(),
-            GDACRepositoryService(),
-            BGCNetCDFReader(),
-            ProfileVisualizationEngine(),
-        )
+        from floatchat.api.dependencies import get_runtime_query_engine
 
-        class _SilentExplainer:
-            """Drop-in that never calls an LLM."""
-
-            def generate_explanation(self, *a, **k):
-                return ""
-
-            def _narration_is_enabled(self):
-                return False
-
-        engine.explanation_engine = _SilentExplainer()  # type: ignore[assignment]
+        engine = get_runtime_query_engine()
         response = engine.execute(intent)
     finally:
         settings.sci_narrator_enabled = prev_flag
@@ -1939,6 +1912,11 @@ def get_float_plot(
     var = str(variable or "TEMP").strip().upper()
     if not var:
         var = "TEMP"
+    if not VariableRegistry.is_valid_variable(var) or var == "PRES":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported plot variable: {var}",
+        )
 
     # A plot request without an explicit cycle uses the latest known cycle as
     # a backward-compatible default. It never silently retrieves 100 cycles.
@@ -1965,21 +1943,9 @@ def get_float_plot(
     prev_flag = getattr(settings, "sci_narrator_enabled", True)
     settings.sci_narrator_enabled = False
     try:
-        engine = QueryEngine(
-            GDACMetadataService(),
-            GDACRepositoryService(),
-            BGCNetCDFReader(),
-            ProfileVisualizationEngine(),
-        )
+        from floatchat.api.dependencies import get_runtime_query_engine
 
-        class _SilentExplainer:
-            def generate_explanation(self, *a, **k):
-                return ""
-
-            def _narration_is_enabled(self):
-                return False
-
-        engine.explanation_engine = _SilentExplainer()  # type: ignore[assignment]
+        engine = get_runtime_query_engine()
         response = engine.execute(intent)
     finally:
         settings.sci_narrator_enabled = prev_flag

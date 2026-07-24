@@ -321,21 +321,18 @@ export function MapPanel({
         ["+", ["coalesce", ["get", "marker_size"], 7], 1.5],
         ["coalesce", ["get", "marker_size"], 7],
       ] as any,
+      // Status owns the fill color. Selection is communicated separately by
+      // marker radius, stroke, and the marker-halo layer below.
       "circle-color": [
-        "case",
-        ["==", ["get", "selected"], true],
-        "#06b6d4",
-        [
-          "match",
-          ["get", "status"],
-          "active",
-          "#00d2ff",
-          "drifted",
-          "#ffa01e",
-          "inactive",
-          "#ff5050",
-          "#94a3b8",
-        ],
+        "match",
+        ["get", "status"],
+        "active",
+        "#00d2ff",
+        "drifted",
+        "#ffa01e",
+        "inactive",
+        "#ff5050",
+        "#94a3b8",
       ] as any,
       "circle-stroke-width": [
         "case",
@@ -377,8 +374,10 @@ export function MapPanel({
           return;
         }
 
-        // Normal marker click → open inspector (or toggle off)
-        onSelectFloat(fid === selectedFloat ? null : fid);
+        // Normal marker click is intentionally non-toggle. The parent owns
+        // the two-stage interaction: first click selects, second click on the
+        // same float opens inspection.
+        onSelectFloat(fid);
       } else {
         if (isTrajectoryMode && onSelectTrajectoryPoint) {
           onSelectTrajectoryPoint(null);
@@ -388,7 +387,6 @@ export function MapPanel({
       }
     },
     [
-      selectedFloat,
       onSelectFloat,
       isTrajectoryMode,
       onSelectTrajectoryPoint,

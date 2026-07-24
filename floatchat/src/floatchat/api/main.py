@@ -13,8 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 
-from floatchat.api.dependencies import get_metadata_service
+from floatchat.api.dependencies import (
+    get_metadata_service,
+    initialize_runtime_services,
+)
 from floatchat.api.routes import router
+from floatchat.config import settings
 from floatchat.exceptions import (
     FloatChatError,
     IntentParseError,
@@ -88,6 +92,38 @@ def _make_exception_handler(status_code: int):
     return _handler
 
 
+def _runtime_lake_readiness() -> dict[str, bool]:
+    """Report DuckDB/Parquet readiness without loading GDAC metadata."""
+    try:
+        from floatchat.api.dependencies import get_data_lake
+
+        lake = get_data_lake()
+        levels_ready = lake.is_available()
+        phase2_root = getattr(lake, "_phase2_root", None)
+        profile_index_ready = bool(
+            phase2_root
+            and (phase2_root / "parquet" / "profile_index").exists()
+        )
+        float_registry_ready = bool(
+            phase2_root
+            and (phase2_root / "parquet" / "float_registry").exists()
+        )
+        return {
+            "duckdb_ready": levels_ready,
+            "float_registry_ready": float_registry_ready,
+            "profile_index_ready": profile_index_ready,
+            "levels_ready": levels_ready,
+        }
+    except Exception as exc:
+        logger.warning("Runtime lake readiness check failed: %s", exc)
+        return {
+            "duckdb_ready": False,
+            "float_registry_ready": False,
+            "profile_index_ready": False,
+            "levels_ready": False,
+        }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler.
@@ -99,9 +135,24 @@ async def lifespan(app: FastAPI):
     # --- Phase 23: NetCDF cache cleanup ---------------------------------- #
     cleanup_expired_netcdf_cache()
 
-    # --- Metadata load --------------------------------------------------- #
-    metadata = get_metadata_service()
-    metadata.load()
+    # --- Optional GDAC metadata load ------------------------------------ #
+    # Normal application runtime is DuckDB/Parquet-backed and must not
+    # download or materialize the multi-million-row GDAC indexes. The ETL
+    # invokes GDACMetadataService.load() directly and is unaffected.
+    if settings.enable_gdac_runtime:
+        logger.info("GDAC runtime metadata enabled; loading legacy indexes")
+        metadata = get_metadata_service()
+        metadata.load()
+    else:
+        logger.info(
+            "GDAC runtime metadata disabled; starting with DuckDB/Parquet only"
+        )
+
+    # Construct the reusable runtime graph once. The data lake owns the
+    # process-local DuckDB connection(s); request handlers receive the same
+    # QueryEngine and lake instances through dependency injection.
+    initialize_runtime_services()
+    logger.info("Runtime services initialized and ready for reuse")
     yield
     # Shutdown: nothing to clean up explicitly.
 
@@ -148,11 +199,12 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def health() -> JSONResponse:
-        metadata = get_metadata_service()
+        readiness = _runtime_lake_readiness()
         return JSONResponse(
             content={
-                "status": "ok",
-                "metadata_loaded": metadata.is_loaded(),
+                "status": "ok" if readiness["duckdb_ready"] else "degraded",
+                **readiness,
+                "gdac_runtime_enabled": settings.enable_gdac_runtime,
             }
         )
 

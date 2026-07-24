@@ -15,7 +15,7 @@ import { MetadataInspector } from "@/components/Results/MetadataInspector";
 import { CycleHistory } from "@/components/Map/CycleHistory";
 import { PlotDrawer } from "@/components/Results/PlotDrawer";
 import { useChat } from "@/hooks/useChat";
-import { FloatRegistryInfo } from "@/types";
+import { CyclePoint, FloatRegistryInfo } from "@/types";
 
 const MapPanel = dynamic(
   () => import("@/components/Map/MapPanel").then((mod) => mod.MapPanel),
@@ -44,6 +44,8 @@ export default function HomePage() {
     setChatOpen,
     context,
     cycleData,
+    selectedProfileNumber,
+    selectProfile,
     isLoadingCycles,
     highlightCycle,
     setHighlightCycle,
@@ -418,6 +420,9 @@ export default function HomePage() {
         floatIds={plotFloatIds}
         selectedFloatId={plotSelectedFloat}
         onSelectFloatId={setPlotSelectedFloat}
+        profileNumber={selectedProfileNumber}
+        profiles={cycleData || []}
+        onSelectProfile={selectProfile}
       />
     </>
   );

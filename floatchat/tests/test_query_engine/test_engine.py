@@ -173,7 +173,9 @@ class TestQueryEngine:
         engine._data_lake = mock_lake
 
         # With allow_remote_gdac_fallback=True, GDAC fallback should work
-        with patch.object(settings, "allow_remote_gdac_fallback", True):
+        with patch.object(settings, "allow_remote_gdac_fallback", True), patch.object(
+            settings, "enable_gdac_runtime", True
+        ):
             intent = ParsedIntent(intent="metadata_lookup", float_id="6903091")
             response = engine.execute(intent)
 

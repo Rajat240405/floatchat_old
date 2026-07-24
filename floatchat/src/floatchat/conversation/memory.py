@@ -53,6 +53,7 @@ class InMemoryConversationManager(AbstractConversationManager):
         session_id: str | None,
         intent: ParsedIntent,
         message: str | None = None,
+        in_place: bool = False,
     ) -> ParsedIntent:
         """Merge context from previous turn into *intent*.
 
@@ -89,6 +90,15 @@ class InMemoryConversationManager(AbstractConversationManager):
 
         merged_data = intent.model_dump()
 
+        def _finalize(data: dict) -> ParsedIntent:
+            merged = ParsedIntent(**data)
+            if in_place:
+                # Preserve the canonical object identity for the resolver while
+                # retaining Pydantic validation of enriched values.
+                intent.__dict__.update(merged.__dict__)
+                return intent
+            return merged
+
         # --- Priority 2: Reference phrase detection --- #
         # Use the explicit message (passed by the chat pipeline) as the primary
         # source. This is robust against the LLM extractor / recovery paths
@@ -118,7 +128,7 @@ class InMemoryConversationManager(AbstractConversationManager):
             merged_data = self._merge_metadata_followup(
                 merged_data, ctx, ref
             )
-            merged = ParsedIntent(**merged_data)
+            merged = _finalize(merged_data)
             logger.info(
                 "Merged metadata followup for session %s: vars=%s region=%s float=%s year=%s profile=%s",
                 session_id,
@@ -224,7 +234,7 @@ class InMemoryConversationManager(AbstractConversationManager):
         ):
             merged_data["profile_number"] = ctx.last_profile_number
 
-        merged = ParsedIntent(**merged_data)
+        merged = _finalize(merged_data)
         logger.info(
             "Merged context for session %s: vars=%s region=%s float=%s year=%s profile=%s (ref=%s)",
             session_id,

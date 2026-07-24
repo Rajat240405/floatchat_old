@@ -11,7 +11,7 @@ import {
   PinOff,
   BarChart3,
 } from "lucide-react";
-import { PlotItem, PlotlyFigure } from "@/types";
+import { CyclePoint, PlotItem, PlotlyFigure } from "@/types";
 
 interface PlotDrawerProps {
   isOpen: boolean;
@@ -24,6 +24,10 @@ interface PlotDrawerProps {
   /** null = All Floats overlay. */
   selectedFloatId?: string | null;
   onSelectFloatId?: (id: string | null) => void;
+  /** Currently selected scientific profile/cycle. */
+  profileNumber?: number | null;
+  profiles?: CyclePoint[];
+  onSelectProfile?: (cycleNumber: number) => void;
 }
 
 /** Filter a figure's traces down to one float (or keep all). */
@@ -53,8 +57,13 @@ export function PlotDrawer({
   floatIds = [],
   selectedFloatId = null,
   onSelectFloatId,
+  profileNumber = null,
+  profiles = [],
+  onSelectProfile,
 }: PlotDrawerProps) {
-  const [expandedPlot, setExpandedPlot] = useState<string | null>(null);
+  // Expansion is independent per card; multiple plots may remain open together.
+  const [expandedPlots, setExpandedPlots] = useState<Set<string>>(new Set());
+  const knownPlotIdsRef = useRef<Set<string>>(new Set());
   const [fullscreenPlot, setFullscreenPlot] = useState<string | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(520);
@@ -67,17 +76,22 @@ export function PlotDrawer({
     }
   }, [isOpen]);
 
-  // Auto-expand first plot when drawer opens with plots
+  // Expand every newly selected plot without changing the user's explicit
+  // expand/collapse choice for existing cards. This also keeps expansion
+  // independent when cards are added one at a time.
   useEffect(() => {
-    if (isOpen && plots.length > 0 && !expandedPlot) {
-      const sorted = [...plots].sort((a, b) => {
-        if (a.pinned && !b.pinned) return -1;
-        if (!a.pinned && b.pinned) return 1;
-        return a.variable.localeCompare(b.variable);
-      });
-      setExpandedPlot(sorted[0].id);
-    }
-  }, [isOpen, plots, expandedPlot]);
+    const validIds = new Set(plots.map((plot) => plot.id));
+    setExpandedPlots((previous) => {
+      const next = new Set([...previous].filter((id) => validIds.has(id)));
+      for (const plot of plots) {
+        if (!knownPlotIdsRef.current.has(plot.id)) {
+          next.add(plot.id);
+        }
+        knownPlotIdsRef.current.add(plot.id);
+      }
+      return next;
+    });
+  }, [plots]);
 
   const handleMouseDown = useCallback(() => {
     setIsResizing(true);
@@ -155,6 +169,9 @@ export function PlotDrawer({
   );
 
   const showFloatSelector = floatIds.length > 1;
+  const activeProfile = profileNumber != null
+    ? profiles.find((profile) => profile.cycleNumber === profileNumber) || null
+    : null;
 
   if (plots.length === 0) return null;
 
@@ -219,27 +236,60 @@ export function PlotDrawer({
               </button>
             </div>
 
-            {/* Single-float badge when only one float in set */}
+            {/* Scientific profile context and cycle selector */}
             {!showFloatSelector && floatIds.length === 1 && (
-              <div className="px-4 py-2 border-b border-slate-200 bg-ocean-50/50 flex-shrink-0">
-                <span className="text-xs font-semibold text-ocean-700">
-                  Float {floatIds[0]}
-                </span>
+              <div className="px-4 py-2.5 border-b border-slate-200 bg-ocean-50/50 flex-shrink-0 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-ocean-700">
+                    Float {floatIds[0]}
+                  </span>
+                  {profiles.length > 0 && onSelectProfile && (
+                    <label className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-600">
+                      <span>Profile</span>
+                      <select
+                        value={profileNumber ?? profiles[profiles.length - 1]?.cycleNumber ?? ""}
+                        onChange={(event) => onSelectProfile(Number(event.target.value))}
+                        className="rounded-md border border-ocean-200 bg-white px-1.5 py-1 text-[11px] font-semibold text-ocean-700 outline-none focus:ring-2 focus:ring-ocean-200"
+                        aria-label="Select scientific profile cycle"
+                      >
+                        {profiles.map((profile) => (
+                          <option key={profile.cycleNumber} value={profile.cycleNumber}>
+                            Cycle {profile.cycleNumber}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+                {activeProfile && (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-slate-500">
+                    <span>Date: {activeProfile.date ? new Date(activeProfile.date).toLocaleString() : "Not available"}</span>
+                    <span>Cycle: {activeProfile.cycleNumber}</span>
+                    <span>Lat: {activeProfile.latitude != null ? `${activeProfile.latitude.toFixed(2)}°` : "—"}</span>
+                    <span>Lon: {activeProfile.longitude != null ? `${activeProfile.longitude.toFixed(2)}°` : "—"}</span>
+                  </div>
+                )}
               </div>
             )}
 
             {/* Plot Cards */}
-            <div className="flex-1 overflow-y-auto scrollbar-thin p-4 flex flex-col gap-4 bg-slate-50/60">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin p-4 flex flex-col items-stretch gap-4 bg-slate-50/60">
               {sortedPlots.map((plot) => (
                 <PlotCard
                   key={plot.id}
                   plot={plot}
-                  filteredFigure={filterFigureByFloat(plot.figure, selectedFloatId)}
-                  isExpanded={expandedPlot === plot.id}
+                  figure={plot.figure}
+                  selectedFloatId={selectedFloatId}
+                  isExpanded={expandedPlots.has(plot.id)}
                   isFullscreen={fullscreenPlot === plot.id}
                   drawerWidth={drawerWidth}
                   onToggleExpand={() =>
-                    setExpandedPlot(expandedPlot === plot.id ? null : plot.id)
+                    setExpandedPlots((previous) => {
+                      const next = new Set(previous);
+                      if (next.has(plot.id)) next.delete(plot.id);
+                      else next.add(plot.id);
+                      return next;
+                    })
                   }
                   onToggleFullscreen={() =>
                     setFullscreenPlot(fullscreenPlot === plot.id ? null : plot.id)
@@ -283,7 +333,8 @@ export function PlotDrawer({
 
 interface PlotCardProps {
   plot: PlotItem;
-  filteredFigure: PlotlyFigure;
+  figure: PlotlyFigure;
+  selectedFloatId?: string | null;
   isExpanded: boolean;
   isFullscreen: boolean;
   drawerWidth: number;
@@ -296,7 +347,8 @@ interface PlotCardProps {
 
 function PlotCard({
   plot,
-  filteredFigure,
+  figure,
+  selectedFloatId,
   isExpanded,
   isFullscreen,
   drawerWidth,
@@ -308,24 +360,30 @@ function PlotCard({
 }: PlotCardProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const plotlyRef = useRef<typeof import("plotly.js-dist-min") | null>(null);
+  const filteredFigure = useMemo(
+    () => filterFigureByFloat(figure, selectedFloatId),
+    [figure, selectedFloatId]
+  );
 
   // Render / update chart whenever expanded figure or width changes
   useEffect(() => {
     if (!isExpanded || !chartRef.current || isFullscreen) return;
 
+    const chartElement = chartRef.current;
     let cancelled = false;
 
     const render = async () => {
       const Plotly = await import("plotly.js-dist-min");
       plotlyRef.current = Plotly;
-      if (cancelled || !chartRef.current) return;
+      if (cancelled) return;
 
       const layout = buildScientificLayout(filteredFigure, {
         height: 440,
       });
 
+      const plotlyStartMs = performance.now();
       await Plotly.react(
-        chartRef.current,
+        chartElement,
         filteredFigure.data as Plotly.Data[],
         layout,
         {
@@ -342,11 +400,27 @@ function PlotCard({
           },
         }
       );
+      const plotlyRenderTimeMs = performance.now() - plotlyStartMs;
+      const telemetry = plot.telemetry;
+      if (telemetry) {
+        console.table({
+          variable: plot.variable,
+          apiResponseTimeMs: Number(telemetry.apiResponseTimeMs.toFixed(1)),
+          jsonParseTimeMs: Number(telemetry.jsonParseTimeMs.toFixed(1)),
+          plotlyRenderTimeMs: Number(plotlyRenderTimeMs.toFixed(1)),
+          timeToFirstPlotRenderMs: Number(
+            (performance.now() - telemetry.requestStartMs).toFixed(1)
+          ),
+          traceCount: telemetry.traceCount,
+          pointCount: telemetry.pointCount,
+          figurePayloadKb: Number(telemetry.figurePayloadKb.toFixed(2)),
+        });
+      }
 
       // Force a resize so legends/axes fit the drawer width
       try {
-        if (chartRef.current && chartRef.current.offsetWidth > 0) {
-          await Plotly.Plots.resize(chartRef.current).catch(() => { /* ignore */ });
+        if (chartElement.offsetWidth > 0) {
+          await Plotly.Plots.resize(chartElement).catch(() => { /* ignore */ });
         }
       } catch {
         /* ignore */
@@ -357,8 +431,17 @@ function PlotCard({
 
     return () => {
       cancelled = true;
+      // Release Plotly DOM listeners/WebGL resources when a card collapses or
+      // is removed. This prevents hidden charts from accumulating overhead.
+      if (plotlyRef.current) {
+        try {
+          plotlyRef.current.purge(chartElement);
+        } catch {
+          /* ignore cleanup failures */
+        }
+      }
     };
-  }, [isExpanded, filteredFigure, plot.variable, drawerWidth, isFullscreen]);
+  }, [isExpanded, filteredFigure, plot.variable, plot.telemetry, drawerWidth, isFullscreen]);
 
   // Resize observer — keep Plotly in sync with drawer width
   useEffect(() => {
@@ -379,7 +462,7 @@ function PlotCard({
 
   return (
     <div
-      className={`rounded-xl border overflow-hidden bg-white shadow-sm transition-shadow hover:shadow-md ${
+      className={`flex-none w-full rounded-xl border overflow-hidden bg-white shadow-sm transition-shadow hover:shadow-md ${
         plot.pinned ? "border-ocean-300 ring-1 ring-ocean-200" : "border-slate-200"
       }`}
     >

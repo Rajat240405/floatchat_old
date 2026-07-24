@@ -19,6 +19,38 @@ const api = axios.create({
   timeout: 180000,
 });
 
+type JsonRequestTelemetry = {
+  requestStartMs: number;
+  apiResponseTimeMs: number;
+  jsonParseTimeMs: number;
+};
+
+async function fetchJsonWithTelemetry<T>(
+  url: string,
+  init?: RequestInit
+): Promise<{ data: T; telemetry: JsonRequestTelemetry }> {
+  const requestStartMs = performance.now();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 180000);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const responseText = await response.text();
+    const apiResponseTimeMs = performance.now() - requestStartMs;
+    if (!response.ok) {
+      throw new Error(`Request failed (${response.status}): ${responseText.slice(0, 240)}`);
+    }
+    const parseStartMs = performance.now();
+    const data = JSON.parse(responseText) as T;
+    const jsonParseTimeMs = performance.now() - parseStartMs;
+    return {
+      data,
+      telemetry: { requestStartMs, apiResponseTimeMs, jsonParseTimeMs },
+    };
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 // ── Chat (LLM path — natural language ONLY) ───────────────────────────────
 
 export async function sendChatMessage(
@@ -29,8 +61,16 @@ export async function sendChatMessage(
   if (sessionId) {
     payload.session_id = sessionId;
   }
-  const { data } = await api.post<ChatResponse>("/api/v1/chat", payload);
-  return data;
+  const result = await fetchJsonWithTelemetry<ChatResponse>(
+    `${BACKEND_URL}/api/v1/chat`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+  return { ...result.data, telemetry: result.telemetry };
+
 }
 
 export async function checkHealth(): Promise<HealthResponse> {
@@ -133,7 +173,8 @@ export async function getFloatAvailablePlots(floatId: string): Promise<{
 /** GET /api/v1/floats/{id}/plot?variable=TEMP — deterministic plot, no LLM */
 export async function getFloatVariablePlot(
   floatId: string,
-  variable: string
+  variable: string,
+  profileNumber?: number | null
 ): Promise<{
   float_id: string;
   intent: string;
@@ -142,12 +183,41 @@ export async function getFloatVariablePlot(
   figures: PlotlyFigure[] | null;
   data_summary: DataSummary;
   map_data: MapData[];
+  telemetry: {
+    requestStartMs: number;
+    apiResponseTimeMs: number;
+    jsonParseTimeMs: number;
+  };
 }> {
-  const { data } = await api.get(
-    `/api/v1/floats/${encodeURIComponent(floatId)}/plot`,
-    { params: { variable } }
-  );
-  return data;
+  // Use fetch for this diagnostic endpoint so network transfer and JSON.parse
+  // can be measured separately. Other API calls retain the existing Axios path.
+  const requestStartMs = performance.now();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 180000);
+  try {
+    const response = await fetch(
+      `${BACKEND_URL}/api/v1/floats/${encodeURIComponent(floatId)}/plot?variable=${encodeURIComponent(variable)}${profileNumber != null ? `&profile_number=${encodeURIComponent(profileNumber)}` : ""}`, 
+      {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+      }
+    );
+    const responseText = await response.text();
+    const apiResponseTimeMs = performance.now() - requestStartMs;
+    if (!response.ok) {
+      throw new Error(`Plot request failed (${response.status}): ${responseText.slice(0, 240)}`);
+    }
+    const parseStartMs = performance.now();
+    const data = JSON.parse(responseText);
+    const jsonParseTimeMs = performance.now() - parseStartMs;
+    return {
+      ...data,
+      telemetry: { requestStartMs, apiResponseTimeMs, jsonParseTimeMs },
+    };
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export function getErrorMessage(error: unknown): string {

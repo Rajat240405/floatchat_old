@@ -53,6 +53,7 @@ const PLOT_EMOJI: Record<string, string> = {
   NITRATE: "🧪",
   BBP700: "✨",
   PH_IN_SITU_TOTAL: "⚗️",
+  DOWNWELLING_PAR: "☀️",
 };
 
 export function MetadataInspector({

@@ -43,11 +43,31 @@ def _qc_to_alpha(qc: str) -> float:
     return mapping.get(str(qc).strip(), 0.5)
 
 
+def _compact_figure_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove Plotly defaults that do not change the rendered figure.
+
+    Scientific values, hover text, styling, and subplot layout are retained.
+    ``showlegend=True`` is Plotly's default for these traces. Explicit axis
+    references are retained for compatibility with existing subplot consumers.
+    """
+    traces = payload.get("data", []) or []
+    for trace in traces:
+        if not isinstance(trace, dict):
+            continue
+        if trace.get("showlegend") is True:
+            trace.pop("showlegend", None)
+        # Keep explicit axis references for compatibility with existing
+        # subplot consumers and regression tests, even for one-axis figures.
+    return payload
+
+
 def _figure_metrics(payload: dict[str, Any]) -> tuple[int, int, int]:
     """Return (trace_count, plotted_points, serialized_bytes) for diagnostics."""
     traces = payload.get("data", []) or []
     points = 0
     for trace in traces:
+        if not isinstance(trace, dict):
+            continue
         points += max(len(trace.get("x", []) or []), len(trace.get("y", []) or []))
     serialized_bytes = len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     return len(traces), points, serialized_bytes
@@ -194,14 +214,14 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                     vals = vals[mask]
 
                 if group_col == "float_id":
-                    hover = [f"Float: {g_val}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
+                    hover_template = f"Float: {g_val}<br>PRES: %{{y:.1f}}<br>{var}: %{{x:.3f}}<extra></extra>"
                     name = f"Float {g_val}"
                 elif group_col == "_plot_profile_key":
                     profile_float, profile_cycle = str(g_val).split("::", 1)
-                    hover = [f"Float: {profile_float}<br>Cycle: {profile_cycle}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
+                    hover_template = f"Float: {profile_float}<br>Cycle: {profile_cycle}<br>PRES: %{{y:.1f}}<br>{var}: %{{x:.3f}}<extra></extra>"
                     name = f"Float {profile_float} · Cycle {profile_cycle}"
                 else:
-                    hover = [f"Profile: {g_val}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
+                    hover_template = f"Profile: {g_val}<br>PRES: %{{y:.1f}}<br>{var}: %{{x:.3f}}<extra></extra>"
                     name = f"Profile {g_val}"
 
                 colour = _COLOURS[g_idx % len(_COLOURS)]
@@ -228,8 +248,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                             name=name,
                             line=dict(color=colour, width=1.6),
                             marker=dict(color=marker_colors, size=6),
-                            hovertext=hover,
-                            hoverinfo="text",
+                            hovertemplate=hover_template,
                             showlegend=True,
                         ),
                         row=r, col=c,
@@ -242,8 +261,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                             name=name,
                             line=dict(color=colour, width=1.6),
                             marker=dict(size=5),
-                            hovertext=hover,
-                            hoverinfo="text",
+                            hovertemplate=hover_template,
                             showlegend=True,
                         ),
                         row=r, col=c,
@@ -262,7 +280,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
 
         t_construct_end = time.perf_counter()
         t_serialize_start = time.perf_counter()
-        payload = _sanitize_for_json(fig.to_dict())
+        payload = _compact_figure_payload(_sanitize_for_json(fig.to_dict()))
         json.dumps(payload, separators=(",", ":")).encode("utf-8")
         t_serialize_end = time.perf_counter()
         trace_count, plotted_points, payload_bytes = _figure_metrics(payload)
@@ -372,14 +390,14 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                     vals = vals[mask]
 
                 if group_col == "float_id":
-                    hover = [f"Float: {g_val}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
+                    hover_template = f"Float: {g_val}<br>PRES: %{{y:.1f}}<br>{var}: %{{x:.3f}}<extra></extra>"
                     name = f"Float {g_val}"
                 elif group_col == "_plot_profile_key":
                     profile_float, profile_cycle = str(g_val).split("::", 1)
-                    hover = [f"Float: {profile_float}<br>Cycle: {profile_cycle}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
+                    hover_template = f"Float: {profile_float}<br>Cycle: {profile_cycle}<br>PRES: %{{y:.1f}}<br>{var}: %{{x:.3f}}<extra></extra>"
                     name = f"Float {profile_float} · Cycle {profile_cycle}"
                 else:
-                    hover = [f"Profile: {g_val}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
+                    hover_template = f"Profile: {g_val}<br>PRES: %{{y:.1f}}<br>{var}: %{{x:.3f}}<extra></extra>"
                     name = f"Profile {g_val}"
 
                 colour = _COLOURS[g_idx % len(_COLOURS)]
@@ -419,7 +437,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                 legend=dict(orientation="h", yanchor="bottom", y=-0.22),
                 margin=dict(l=70, r=30, t=50, b=70),
             )
-            payload = _sanitize_for_json(fig.to_dict())
+            payload = _compact_figure_payload(_sanitize_for_json(fig.to_dict()))
             payload["variable"] = var
             figures.append(payload)
 
