@@ -22,17 +22,23 @@ class TestQueryClassifier:
         # Could be DATA_QUERY from rule fallback or LLM
         assert result == "DATA_QUERY"
 
-    def test_classify_general_query_maps_to_knowledge(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Legacy GENERAL_QUERY should map to KNOWLEDGE_QUERY for backward compat."""
+    def test_classify_stale_label_defaults_to_data_query(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Unknown/stale LLM output defaults to DATA_QUERY with a logged warning.
+
+        Cleanup M2: the legacy GENERAL_QUERY alias and its KNOWLEDGE_QUERY
+        pre-mapping were removed. Output outside the four valid buckets
+        (here a stale "GENERAL_QUERY" label, unreachable from the current
+        prompts) now falls through to the documented DATA_QUERY default
+        instead of being reinterpreted.
+        """
         monkeypatch.setattr(settings, "llm_enabled", True)
         llm = MagicMock()
-        llm.generate = MagicMock(return_value="GENERAL_QUERY")
+        llm.generate = MagicMock(return_value="GENERAL_QUERY")  # stale/invalid label
         classifier = QueryClassifier(llm)
 
-        result = classifier.classify("what is argo")
-        # Phase 6: rule-based already catches what is argo as KNOWLEDGE_QUERY without LLM call
-        # So result should be KNOWLEDGE_QUERY even though LLM mock returns GENERAL_QUERY
-        assert result in ("KNOWLEDGE_QUERY", "GENERAL_QUERY")
+        # Message bypasses the rule-based detectors, so the LLM is consulted.
+        result = classifier.classify("oxygen in arabian sea")
+        assert result == "DATA_QUERY"
 
     def test_classify_knowledge_query_rule_based(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Rule-based KNOWLEDGE_QUERY should work even when LLM disabled."""

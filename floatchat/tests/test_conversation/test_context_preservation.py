@@ -25,7 +25,10 @@ class TestContextPreservation:
             ChatResponse(intent="profile_plot", message="ok"),
         )
 
-        # Second: GENERAL_QUERY should NOT erase data context
+        # Second: a non-data turn (general/knowledge chat) must NOT erase the
+        # stored data context. ("general_chat" is just the label used by
+        # general/knowledge-style responses; the rule is label-agnostic:
+        # update_context only overwrites fields the new intent actually sets.)
         mgr.update_context(
             "sess-1",
             ParsedIntent(intent="general_chat"),

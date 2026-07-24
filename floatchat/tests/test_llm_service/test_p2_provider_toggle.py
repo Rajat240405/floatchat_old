@@ -168,22 +168,8 @@ def test_gemini_raises_domain_error_on_http_failure():
             svc.generate("hi")
 
 
-# --------------------------------------------------------------------------- #
-# End-to-end: extractor builds the right provider service lazily
-# --------------------------------------------------------------------------- #
-def test_extractor_uses_injected_service():
-    """LLMEntityExtractor(service=...) uses it and never builds another."""
-    from floatchat.entity_extractor.extractor import LLMEntityExtractor
-    mock_svc = MagicMock(spec=AbstractLLMService)
-    mock_svc.generate.return_value = json.dumps({
-        "action": "region_search", "variables": ["DOXY"],
-        "spatial_filter": "arabian_sea", "confidence": 0.9,
-    })
-    extractor = LLMEntityExtractor(service=mock_svc)
-    spec = extractor.extract("oxygen in Arabian Sea")
-    assert spec is not None
-    assert spec.variables == ["DOXY"]
-    mock_svc.generate.assert_called_once()
+# (Cleanup M2: the test of LLMEntityExtractor's lazy service build was removed
+# with the extractor itself.)
 
 
 if __name__ == "__main__":

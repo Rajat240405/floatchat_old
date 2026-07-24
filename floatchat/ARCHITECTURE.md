@@ -16,8 +16,10 @@
 >   legacy, exercised mainly by their own tests.
 > - **Additional modules** not covered here: `retrieval_planner/`,
 >   `scientific_explanation/` (narration pipeline), `conversation/`,
->   `llm_service/` (classifier, knowledge base), `entity_extractor/`,
->   `query_normalizer/`, `data_lake/`, `variable_registry/`, and `scripts/`.
+>   `llm_service/` (classifier, knowledge base), `query_normalizer/`,
+>   `data_lake/`, `variable_registry/`, and `scripts/`.
+>   (Cleanup M2: the legacy `entity_extractor/` package was removed; the
+>   resolver's LLM fallback now lives in `intent_resolution/llm_compiler.py`.)
 >
 > Everything below this note is the original Phase 1 text, retained verbatim.
 

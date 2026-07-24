@@ -113,11 +113,13 @@ class Settings(BaseSettings):
     # The LLM normalizer is DEPRECATED for hot-path use.
     query_normalizer_mode: str = "deterministic"
 
-    # ── Priority 3: Structured LLM Entity Extractor ──
-    # When the deterministic regex parser fails to fill all slots, the system
-    # can make ONE call to a small local model to extract structured entities.
-    # The LLM returns a validated JSON QuerySpec — never raw SQL or free text.
-    # Set to empty string "" to disable LLM extraction entirely.
+    # ── Intent compiler (resolver LLM fallback) ──
+    # When the deterministic regex parser cannot fill all intent fields, the
+    # IntentResolver may make ONE call to a small model (LLMIntentCompiler)
+    # that returns validated ParsedIntent JSON — never raw SQL or free text.
+    # Field names keep the historical `extractor_*` prefix for env-var
+    # compatibility (FLOATCHAT_EXTRACTOR_MODEL etc.). Set extractor_model to
+    # the empty string "" to disable the compiler entirely.
     extractor_model: str = "qwen2.5:3b"  # P2: 0.5b hallucinated regions/vars; 3b is reliable
     extractor_timeout: float = 10.0  # seconds — generous timeout for small model
     extractor_max_retries: int = 1

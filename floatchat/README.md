@@ -110,10 +110,9 @@ floatchat/
 │   ├── exceptions.py
 │   ├── logging_config.py
 │   ├── models/           # Pydantic cross-module types
-│   ├── intent_resolution/# Canonical resolver (regex + optional LLM compiler)
+│   ├── intent_resolution/# Canonical resolver + llm_compiler.py (single LLM path)
 │   ├── intent_parser/    # Legacy individual parsers (Mock, Regex, Ollama)
 │   ├── llm_service/      # Query classifier, Ollama client, knowledge base
-│   ├── entity_extractor/ # Structured LLM entity extraction (legacy path)
 │   ├── query_normalizer/ # Query cleanup (deterministic by default)
 │   ├── conversation/     # Session context memory
 │   ├── retrieval_planner/# Operation planner

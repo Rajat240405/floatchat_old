@@ -23,7 +23,10 @@ _CLASSIFIER_SYSTEM = (
     "Examples: hi→SMALL_TALK, who won world cup→OUT_OF_DOMAIN, What is Argo float?→KNOWLEDGE_QUERY, Show oxygen in Arabian Sea→DATA_QUERY\n"
 )
 
-QueryType = Literal["DATA_QUERY", "SMALL_TALK", "OUT_OF_DOMAIN", "KNOWLEDGE_QUERY", "GENERAL_QUERY"]
+# Cleanup M2: the legacy GENERAL_QUERY alias was removed. The valid label
+# space is exactly these four buckets; stale/unknown model output falls
+# through to the DATA_QUERY default below.
+QueryType = Literal["DATA_QUERY", "SMALL_TALK", "OUT_OF_DOMAIN", "KNOWLEDGE_QUERY"]
 
 # --------------------------------------------------------------------------- #
 # Detectors
@@ -324,8 +327,6 @@ class QueryClassifier:
         if "OUT_OF_DOMAIN" in cleaned or "OUT-OF-DOMAIN" in cleaned:
             return "OUT_OF_DOMAIN"
         if "KNOWLEDGE_QUERY" in cleaned or "KNOWLEDGE" in cleaned:
-            return "KNOWLEDGE_QUERY"
-        if "GENERAL_QUERY" in cleaned:
             return "KNOWLEDGE_QUERY"
         if "DATA_QUERY" in cleaned:
             return "DATA_QUERY"

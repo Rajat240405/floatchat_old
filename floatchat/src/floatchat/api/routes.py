@@ -5,7 +5,10 @@
   SMALL_TALK     -> Fast hardcoded greeting (no LLM)
   OUT_OF_DOMAIN  -> Fast hardcoded polite bouncer (no LLM)
   KNOWLEDGE_QUERY-> Vetted local KB + strict LLM prompt, no hallucination
-  GENERAL_QUERY  -> Legacy alias (treated as KNOWLEDGE but direct LLM for backward compat in tests)
+
+Cleanup M2: the legacy GENERAL_QUERY alias and the QuerySpec/LLMEntityExtractor
+fallback architecture were removed. IntentResolver (regex + LLMIntentCompiler)
+is the single LLM path.
 """
 
 import json
@@ -29,13 +32,6 @@ from floatchat.api.dependencies import (
 )
 from floatchat.config import settings
 from floatchat.conversation.base import AbstractConversationManager
-from floatchat.conversation.reference_phrases import detect_reference_phrases
-from floatchat.entity_extractor.extractor import (
-    LLMEntityExtractor,
-    _is_placeholder_time_filter,
-    build_clarification_message,
-)
-from floatchat.entity_extractor.temporal_resolver import resolve_temporal_filter
 from floatchat.exceptions import FloatChatError, IntentParseError
 from floatchat.intent_parser.base import AbstractIntentParser
 from floatchat.intent_resolution.resolver import IntentResolver
@@ -59,7 +55,6 @@ class FloatRegistryResponse(BaseModel):
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
 
 
 class ChatRequest(BaseModel):
@@ -114,7 +109,6 @@ def _is_active_scientific_followup(message: str, context: Any | None) -> bool:
     if definition_request and not deictic_reference:
         return False
     return True
-
 
 
 def _check_critical_fields(intent: ParsedIntent, has_context: bool) -> str | None:
@@ -195,7 +189,7 @@ def _build_full_context_prompt(
     session_id: str | None,
     message: str,
 ) -> str:
-    """Build a rich context prompt for GENERAL_QUERY / KNOWLEDGE_QUERY explanations."""
+    """Build a rich context prompt for KNOWLEDGE_QUERY explanations."""
     if not session_id:
         return message
 
@@ -226,86 +220,6 @@ def _build_full_context_prompt(
             lines.append(f"Total measurements: {summary['total_measurements']}")
 
     return "\n".join(lines)
-
-
-def _try_conversational_recovery(
-    message: str,
-    session_id: str | None,
-    conversation_manager: AbstractConversationManager,
-    intent_parser: AbstractIntentParser,
-) -> ParsedIntent | None:
-    """Attempt to recover from a parse failure using conversation context.
-
-    Priority 2: Recovery only proceeds if the user's message contains an
-    explicit reference phrase. Without one, no context is inherited.
-    """
-    if not session_id:
-        logger.debug("No session_id; skipping conversational recovery")
-        return None
-
-    ctx = conversation_manager.get_context(session_id)
-    if not ctx:
-        logger.debug("No context for session %s; skipping recovery", session_id)
-        return None
-
-    if ctx.turn_count >= getattr(conversation_manager, "_max_turns", 10):
-        logger.debug("Session %s context expired; skipping recovery", session_id)
-        return None
-
-    # Priority 2: Check for reference phrases BEFORE attempting recovery
-    ref = detect_reference_phrases(message)
-    if not ref.has_reference:
-        logger.info(
-            "No reference phrase in %r — skipping conversational recovery",
-            message,
-        )
-        return None
-
-    # Priority 2: If metadata follow-up detected, create a metadata_lookup intent
-    if ref.is_metadata_followup:
-        minimal = ParsedIntent(intent="metadata_lookup")
-        # Pass the raw message explicitly so merge_context can detect
-        # reference phrases robustly (no reliance on smuggled attributes).
-        merged = conversation_manager.merge_context(
-            session_id, minimal, message=message
-        )
-        logger.info(
-            "Conversational recovery (metadata) for session %s: "
-            "merged_float=%s ref=%s",
-            session_id,
-            merged.float_id,
-            ref,
-        )
-        if merged.float_id:
-            return merged
-        # No float_id to inherit — can't do metadata lookup without a float
-        return None
-
-    try:
-        minimal = intent_parser.parse(message)
-    except IntentParseError:
-        minimal = ParsedIntent(intent="profile_plot")
-
-    # Pass the raw message explicitly so merge_context can detect reference
-    # phrases robustly (no reliance on a smuggled _original_message attribute).
-    merged = conversation_manager.merge_context(
-        session_id, minimal, message=message
-    )
-    logger.info(
-        "Conversational recovery for session %s: original_vars=%s merged_vars=%s "
-        "merged_region=%s merged_float=%s ref=%s",
-        session_id,
-        minimal.variables,
-        merged.variables,
-        merged.region,
-        merged.float_id,
-        ref,
-    )
-
-    if merged.variables or merged.float_id:
-        return merged
-
-    return None
 
 
 def _build_suggestion_message(ctx) -> str:
@@ -346,258 +260,6 @@ def _build_suggestion_message(ctx) -> str:
     parts.append("  • oxygen in Bay of Bengal during monsoon")
 
     return "\n".join(parts)
-
-
-def _try_llm_extraction(
-    message: str,
-    parsed: ParsedIntent,
-    session_id: str | None,
-    conversation_manager: AbstractConversationManager,
-) -> ParsedIntent:
-    """Priority 3: Try LLM entity extraction if critical slots are missing.
-
-    Rules:
-      1. If all slots are filled → return parsed unchanged (NO LLM call).
-      2. If slots are missing → ONE call to small model.
-      3. If LLM succeeds → merge extracted fields into parsed intent.
-      4. If LLM fails or low confidence → return parsed unchanged (graceful degradation).
-    """
-    # Check if critical slots are missing
-    has_vars = bool(parsed.variables)
-    has_float = parsed.float_id is not None
-    has_region = parsed.region is not None
-    has_coords = parsed.lat is not None and parsed.lon is not None
-    has_year = parsed.year is not None
-    is_metadata = parsed.intent == "metadata_lookup"
-    is_trajectory = parsed.intent == "trajectory"
-
-    # P2 dedupe: if this intent was already produced by the LLM recovery path
-    # (_try_llm_extraction_as_recovery), it has already consumed one LLM call.
-    # Don't fire a second extraction — that was the source of the duplicate
-    # ~4s call seen in production for queries like #7.
-    if getattr(parsed, "_llm_extracted", False):
-        logger.debug("Intent already LLM-extracted via recovery — skipping second extraction")
-        return parsed
-
-    # For metadata_lookup and trajectory, float_id is the only critical slot
-    if is_metadata or is_trajectory:
-        if has_float:
-            return parsed  # All critical slots filled
-
-    # For count_aggregate, region alone may be enough
-    if parsed.intent == "count_aggregate" and has_region:
-        return parsed
-
-    # For data queries, we need variables + spatial scope.
-    # BUT: if year is missing, we still try LLM to extract temporal info
-    # (e.g., "during monsoon", "last summer"). This is the main use case
-    # for the LLM extractor — resolving season tokens.
-    if has_vars and (has_region or has_coords or has_float) and has_year:
-        return parsed  # All critical slots filled (including year)
-
-    # If we have vars + spatial but no year, try LLM for temporal extraction
-    # If we're missing vars or spatial scope, try LLM for those too
-    needs_llm = (
-        not has_vars
-        or not (has_region or has_coords or has_float)
-        or not has_year
-    )
-
-    if not needs_llm:
-        return parsed
-
-    # If we reach here, slots are missing. Try LLM extraction.
-    logger.info(
-        "Priority 3: Missing critical slots (vars=%s region=%s float=%s year=%s) "
-        "— attempting LLM extraction",
-        parsed.variables, parsed.region, parsed.float_id, parsed.year,
-    )
-
-    extractor = LLMEntityExtractor()
-
-    # Get conversation context for the LLM
-    ctx_vars, ctx_region, ctx_year, ctx_float = [], None, None, None
-    if session_id:
-        ctx = conversation_manager.get_context(session_id)
-        if ctx:
-            ctx_vars = ctx.last_variables
-            ctx_region = ctx.last_region
-            ctx_year = ctx.last_year
-            ctx_float = ctx.last_float_id
-
-    spec = extractor.extract(
-        message=message,
-        context_vars=ctx_vars,
-        context_region=ctx_region,
-        context_year=ctx_year,
-        context_float=ctx_float,
-    )
-
-    if spec is None:
-        logger.info("Priority 3: LLM extraction returned None — keeping original parsed intent")
-        return parsed
-
-    # Phase 1/2: LLM is RESTRICTED to temporal + action only.
-    # Hard-ignore LLM output for variables, float_id, depth, operational_filter.
-    # Only time_filter and spatial_filter (as geographic inference when no coords)
-    # are accepted from the LLM.
-    updates = {}
-
-    # variables: NEVER from LLM
-    if spec.variables:
-        logger.warning("LLM returned variables %s — IGNORED (restricted field)", spec.variables)
-
-    # float_id: NEVER from LLM
-    if spec.float_id:
-        logger.warning("LLM returned float_id %s — IGNORED (restricted field)", spec.float_id)
-
-    # operational_filter: NEVER from LLM (regex handles "alive"/"active")
-    if spec.operational_filter:
-        logger.warning("LLM returned operational_filter %s — IGNORED (restricted field)", spec.operational_filter)
-
-    # depth_filter: NEVER from LLM (regex handles "deep"/"below Nm"/"surface")
-    if spec.depth_filter:
-        logger.warning("LLM returned depth_filter %s — IGNORED (restricted field)", spec.depth_filter)
-
-    # spatial_filter: ACCEPTABLE only as geographic inference when no coords exist
-    # (e.g., "near Goa" → region inference). Blocked when coordinates already resolved.
-    if not has_region and spec.spatial_filter and not has_coords:
-        updates["region"] = spec.spatial_filter
-
-    if not has_year and spec.time_filter and not _is_placeholder_time_filter(spec.time_filter):
-        # Resolve the temporal filter deterministically. Placeholder values
-        # ("year", "time", ">=", ...) are already filtered out above; any
-        # remaining unresolvable token yields None here and is silently
-        # dropped — a hard filter, not just a warning.
-        resolved = resolve_temporal_filter(
-            spec.time_filter, reference_year=ctx_year
-        )
-        if resolved:
-            if "year" in resolved:
-                updates["year"] = resolved["year"]
-            # If it's a date range, store in data_summary for engine to use
-            elif "date_start" in resolved:
-                updates["temporal_date_start"] = resolved["date_start"]
-                updates["temporal_date_end"] = resolved["date_end"]
-                # Extract year from date_start for the year field
-                updates["year"] = int(resolved["date_start"][:4])
-
-    # depth_filter: NEVER from LLM (handled above — IGNORED)
-    # operational_filter: NEVER from LLM (handled above — IGNORED)
-
-    if updates:
-        logger.info(
-            "Priority 3: LLM extraction filled slots: %s",
-            {k: v for k, v in updates.items() if not k.startswith("_")},
-        )
-        merged_data = parsed.model_dump()
-        merged_data.update({k: v for k, v in updates.items() if not k.startswith("_")})
-        parsed = ParsedIntent(**merged_data)
-
-    return parsed
-
-
-def _try_llm_extraction_as_recovery(
-    message: str,
-    session_id: str | None,
-    conversation_manager: AbstractConversationManager,
-) -> ParsedIntent | None:
-    """Priority 3: Try LLM entity extraction when regex parsing AND conversational
-    recovery both fail.
-
-    This handles complex queries like "alive floats near Goa during last monsoon"
-    where the gazetteer fails but the LLM can extract structured entities.
-
-    Returns a ParsedIntent if extraction succeeds, or None.
-    """
-    extractor = LLMEntityExtractor()
-
-    ctx_vars, ctx_region, ctx_year, ctx_float = [], None, None, None
-    if session_id:
-        ctx = conversation_manager.get_context(session_id)
-        if ctx:
-            ctx_vars = ctx.last_variables
-            ctx_region = ctx.last_region
-            ctx_year = ctx.last_year
-            ctx_float = ctx.last_float_id
-
-    spec = extractor.extract(
-        message=message,
-        context_vars=ctx_vars,
-        context_region=ctx_region,
-        context_year=ctx_year,
-        context_float=ctx_float,
-    )
-
-    if spec is None:
-        logger.info("LLM recovery extraction returned None")
-        return None
-
-    # Phase 1/2: LLM recovery is ALSO restricted to temporal + action + spatial inference.
-    # Hard-ignore variables, float_id, depth, operational_filter from the LLM.
-    updates: dict[str, Any] = {
-        "intent": spec.action,
-    }
-
-    # variables: NEVER from LLM
-    if spec.variables:
-        logger.warning("LLM recovery returned variables %s — IGNORED", spec.variables)
-
-    # float_id: NEVER from LLM
-    if spec.float_id:
-        logger.warning("LLM recovery returned float_id %s — IGNORED", spec.float_id)
-
-    # spatial_filter: ACCEPTABLE for gazetteer resolution (geographic inference)
-    if spec.spatial_filter:
-        # Check if it's a known region
-        known_regions = {"arabian_sea", "bay_of_bengal", "indian_ocean"}
-        sf = spec.spatial_filter.lower().replace(" ", "_").replace("-", "_")
-        if sf in known_regions:
-            updates["region"] = sf
-        else:
-            # Try gazetteer for place names
-            try:
-                from floatchat.intent_parser.gazetteer import resolve_place_name
-                resolved = resolve_place_name(spec.spatial_filter)
-                if resolved:
-                    updates["lat"] = resolved["lat"]
-                    updates["lon"] = resolved["lon"]
-                    # If "alive" or "near" in query, this is a radius_search
-                    if spec.operational_filter or "near" in message.lower():
-                        updates["intent"] = "radius_search"
-                        updates["radius_km"] = 500.0
-            except Exception as exc:
-                logger.warning("Gazetteer failed for LLM-extracted place '%s': %s", spec.spatial_filter, exc)
-
-    # float_id: NEVER from LLM (handled above — IGNORED)
-
-    if spec.time_filter and not _is_placeholder_time_filter(spec.time_filter):
-        resolved = resolve_temporal_filter(spec.time_filter, reference_year=ctx_year)
-        if resolved:
-            if "year" in resolved:
-                updates["year"] = resolved["year"]
-            elif "date_start" in resolved:
-                updates["temporal_date_start"] = resolved["date_start"]
-                updates["temporal_date_end"] = resolved["date_end"]
-                updates["year"] = int(resolved["date_start"][:4])
-
-    # depth_filter: NEVER from LLM (IGNORED)
-    # operational_filter: NEVER from LLM (IGNORED)
-
-    # Only return if we got meaningful spatial or temporal data
-    # (variables and float_id are no longer accepted from the LLM)
-    if not updates.get("lat") and not updates.get("region") and not updates.get("year"):
-        logger.info("LLM recovery extraction had no meaningful spatial/temporal slots")
-        return None
-
-    parsed = ParsedIntent(
-        intent=updates.pop("intent", "region_search"),
-        **{k: v for k, v in updates.items() if not k.startswith("_")},
-    )
-    # P2 dedupe: mark this intent as already LLM-extracted so the subsequent
-    # _try_llm_extraction call in chat() skips a redundant second LLM call.
-    parsed.__dict__["_llm_extracted"] = True
-    return parsed
 
 
 def _execute_mixed_plan(
@@ -752,37 +414,6 @@ def _handle_knowledge_query(
     return response
 
 
-def _handle_general_query_legacy(
-    message: str,
-    session_id: str | None,
-    conversation_manager: AbstractConversationManager,
-    llm_service: AbstractLLMService,
-) -> ChatResponse:
-    """Legacy GENERAL_QUERY handling — direct LLM answer with context hint.
-
-    Kept for backward compatibility with tests that monkeypatch classify to GENERAL_QUERY.
-    In Phase 6, new queries go to KNOWLEDGE_QUERY path instead.
-    """
-    augmented_prompt = _build_full_context_prompt(
-        conversation_manager, session_id, message
-    )
-    answer = llm_service.generate(augmented_prompt)
-
-    response = ChatResponse(
-        intent="general_chat",
-        message=answer,
-        figure=None,
-        data_summary={},
-        map_data=[],
-    )
-    conversation_manager.update_context(
-        session_id,
-        ParsedIntent(intent="general_chat"),
-        response,
-    )
-    return response
-
-
 @router.post("/chat", response_model=ChatResponse)
 def chat(
     request: ChatRequest,
@@ -803,8 +434,7 @@ def chat(
         2. SMALL_TALK      → hardcoded greeting (no LLM)
         3. OUT_OF_DOMAIN   → hardcoded polite bouncer (no LLM)
         4. KNOWLEDGE_QUERY → KB search + strict LLM prompt (or raw KB if LLM disabled)
-        5. GENERAL_QUERY   → legacy path (LLM direct answer)
-        6. DATA_QUERY      → intent parser → merge context → query engine → viz
+        5. DATA_QUERY      → intent parser → merge context → query engine → viz
     """
     request_t0 = time.perf_counter()
     logger.info(
@@ -850,7 +480,7 @@ def chat(
         # Priority 2: Also override OUT_OF_DOMAIN when the message contains
         # a reference phrase — "what about 2022?" is NOT out of domain if
         # the user was just discussing ocean data.
-        if query_type in ("KNOWLEDGE_QUERY", "GENERAL_QUERY", "OUT_OF_DOMAIN"):
+        if query_type in ("KNOWLEDGE_QUERY", "OUT_OF_DOMAIN"):
             try:
                 if intent_parser._is_conversational_follow_up(request.message.lower()):
                     logger.info(
@@ -891,21 +521,6 @@ def chat(
                 ParsedIntent(intent="out_of_domain"),
                 response,
             )
-            _log_response(response, request_t0)
-            return response
-
-        # --- Step 4a: GENERAL_QUERY — legacy direct LLM answer ---------------- #
-        if query_type == "GENERAL_QUERY":
-            # Legacy path preserves old behavior for tests; real new queries are KNOWLEDGE_QUERY
-            gen_t0 = time.perf_counter()
-            response = _handle_general_query_legacy(
-                request.message,
-                request.session_id,
-                conversation_manager,
-                llm_service,
-            )
-            gen_t1 = time.perf_counter()
-            logger.info("LLM general answer generated in %.3fs", gen_t1 - gen_t0)
             _log_response(response, request_t0)
             return response
 

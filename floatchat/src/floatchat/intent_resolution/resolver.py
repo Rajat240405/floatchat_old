@@ -14,7 +14,7 @@ from typing import Any
 
 from floatchat.conversation.base import AbstractConversationManager
 from floatchat.conversation.reference_phrases import detect_reference_phrases
-from floatchat.entity_extractor.extractor import LLMIntentCompiler
+from floatchat.intent_resolution.llm_compiler import LLMIntentCompiler
 from floatchat.exceptions import IntentParseError
 from floatchat.intent_parser.base import AbstractIntentParser
 from floatchat.models import ParsedIntent

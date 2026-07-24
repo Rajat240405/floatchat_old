@@ -213,23 +213,6 @@ class TestChatEndpoint:
         assert "unexpected error" in data["message"].lower()
         assert "exploded" not in data["message"].lower()
 
-    def test_general_query_returns_chat_response(self, client, monkeypatch) -> None:
-        """GENERAL_QUERY (legacy) bypasses data pipeline and returns an LLM answer via KB path."""
-        from floatchat.llm_service.classifier import QueryClassifier
-
-        monkeypatch.setattr(QueryClassifier, "classify", lambda self, msg: "GENERAL_QUERY")
-
-        response = client.post(
-            "/api/v1/chat",
-            json={"message": "What is Argo?"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        # Phase 6: GENERAL_QUERY mapped to knowledge_base handling
-        assert data["intent"] in ("general_chat", "knowledge_base")
-        assert data["figure"] is None
-        assert data["map_data"] == []
-
     def test_knowledge_query_returns_kb_response(self, client, monkeypatch) -> None:
         """KNOWLEDGE_QUERY uses KB."""
         from floatchat.llm_service.classifier import QueryClassifier
@@ -325,31 +308,22 @@ class TestChatEndpoint:
         assert data2["intent"] == "profile_plot"
 
     def test_scientific_followup_overrides_classifier_result(self, monkeypatch) -> None:
-        """Migrated from the obsolete ``test_general_query_uses_context_hint``.
+        """Deictic follow-ups during an active scientific conversation stay on
+        the data path even when the classifier reports KNOWLEDGE_QUERY.
 
-        WHY THE OLD TEST WAS REMOVED (behavior change, not a regression):
-        The old test monkeypatched the classifier to return ``GENERAL_QUERY``
-        on the second turn and asserted that the legacy
-        ``_handle_general_query_legacy`` path called the LLM with a
-        conversation-context hint. That no longer reflects the current
-        architecture, for two reasons:
+        History: this replaced the obsolete ``test_general_query_uses_context_hint``
+        (Cleanup M1), which asserted the legacy direct-LLM GENERAL_QUERY branch.
+        In Cleanup M2 the GENERAL_QUERY alias and that branch were removed
+        entirely; the scenario remains worth guarding because a KNOWLEDGE_QUERY
+        classification for "Explain this graph" is perfectly reachable from the
+        live classifier — and the state-based override must still win:
 
-        1. The production classifier never emits ``GENERAL_QUERY`` — it is a
-           legacy alias kept only for backward compatibility; the LLM
-           fallback inside the classifier maps it to ``KNOWLEDGE_QUERY``
-           (see ``floatchat.llm_service.classifier`` and the routing comment
-           in ``routes.chat``).
-        2. Even if a classifier *did* produce ``GENERAL_QUERY`` for a deictic
-           follow-up such as "Explain this graph" while a scientific
-           conversation is active, ``_is_active_scientific_followup`` forces
-           ``DATA_QUERY`` so the follow-up stays on the data pipeline — it is
-           never answered by a direct LLM call.
+        1. ``_is_active_scientific_followup`` (definition keyword + deictic
+           reference over a live profile context) forces ``DATA_QUERY``.
+        2. Canonical resolution then declines gracefully (intent="unknown")
+           with a context-aware suggestion message — no direct LLM answer.
 
-        This test therefore asserts the CURRENT behavior for the identical
-        conversation: turn 2 is kept on the data path, fails canonical
-        resolution gracefully (intent="unknown"), replies with a
-        context-aware suggestion message that still references the turn-1
-        scientific context, and never calls the LLM.
+        Assertions cover both: the override wins, and the LLM is never called.
         """
         session_id = "test-session-789"
         llm_calls: list[str] = []
@@ -380,13 +354,14 @@ class TestChatEndpoint:
 
         app.dependency_overrides[get_knowledge_base] = lambda: KnowledgeBase()
 
-        # Turn 1 is a real data query; turn 2 forces the (legacy)
-        # GENERAL_QUERY classification to prove the routing override wins.
+        # Turn 1 is a data query; turn 2 forces a KNOWLEDGE_QUERY
+        # classification to prove the state-based routing override wins even
+        # over the live knowledge bucket.
         _classify_calls: list[str] = []
 
         def _fake_classify(self, message: str) -> str:
             _classify_calls.append(message)
-            return "DATA_QUERY" if len(_classify_calls) == 1 else "GENERAL_QUERY"
+            return "DATA_QUERY" if len(_classify_calls) == 1 else "KNOWLEDGE_QUERY"
 
         monkeypatch.setattr(QueryClassifier, "classify", _fake_classify)
 
@@ -403,18 +378,18 @@ class TestChatEndpoint:
             json={"message": "Explain this graph", "session_id": session_id},
         )
         assert response2.status_code == 200
-        # Current behavior: definition word ("explain") + deictic reference
-        # ("this") over an active profile context takes precedence over the
-        # (forced) GENERAL_QUERY classification, so the message stays on the
-        # DATA_QUERY path instead of the legacy direct-LLM path. Canonical
-        # intent resolution cannot bind "Explain this graph" to a query, so
-        # the route replies with the graceful "unknown" response whose
-        # suggestion message is built from the turn-1 scientific context.
+        # Behavior: definition word ("explain") + deictic reference ("this")
+        # over an active profile context takes precedence over the classifier
+        # result (DATA_QUERY override), so the follow-up stays on the data
+        # pipeline rather than being answered directly. Canonical intent
+        # resolution cannot bind "Explain this graph" to a query, so the route
+        # replies with the graceful "unknown" response whose suggestion
+        # message is built from the turn-1 scientific context.
         data2 = response2.json()
         assert data2["intent"] == "unknown"
         assert "You were previously looking at" in data2["message"]
         assert "DOXY" in data2["message"]
         assert "Arabian Sea" in data2["message"]
 
-        # The legacy direct-LLM ("GENERAL_QUERY") path must NOT have fired.
+        # No direct-LLM answer path fired (the legacy branch no longer exists).
         assert llm_calls == []

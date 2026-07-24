@@ -17,7 +17,7 @@ from floatchat.conversation.base import AbstractConversationManager
 from floatchat.data_lake.base import AbstractDataLake
 from floatchat.data_lake.duckdb_lake import DuckDBDataLake
 from floatchat.conversation.memory import InMemoryConversationManager
-from floatchat.entity_extractor.extractor import LLMIntentCompiler
+from floatchat.intent_resolution.llm_compiler import LLMIntentCompiler
 from floatchat.intent_resolution.resolver import IntentResolver
 from floatchat.intent_parser.base import AbstractIntentParser
 from floatchat.intent_parser.regex import RegexIntentParser
@@ -52,7 +52,6 @@ _intent_parser: RegexIntentParser | None = None
 _intent_resolver: IntentResolver | None = None
 _query_engine: QueryEngine | None = None
 _llm_service: OllamaLLMService | None = None
-_extractor_llm_service: OllamaLLMService | None = None  # P2: provider-toggled extractor LLM
 _query_classifier: QueryClassifier | None = None
 _conversation_manager: InMemoryConversationManager | None = None
 _query_normalizer: AbstractQueryNormalizer | None = None
@@ -310,19 +309,6 @@ def get_llm_service() -> AbstractLLMService:
         from floatchat.llm_service.factory import build_llm_service
         _llm_service = build_llm_service(json_mode=False)
     return _llm_service
-
-
-def get_extractor_llm_service() -> AbstractLLMService:
-    """Return the LLM service used by the Priority-3 entity extractor.
-
-    P2: honours ``settings.llm_provider`` (Ollama by default, Gemini when
-    ``FLOATCHAT_LLM_PROVIDER=gemini`` + ``GEMINI_API_KEY`` is set).
-    """
-    global _extractor_llm_service
-    if _extractor_llm_service is None:
-        from floatchat.llm_service.factory import build_extractor_llm_service
-        _extractor_llm_service = build_extractor_llm_service()
-    return _extractor_llm_service
 
 
 

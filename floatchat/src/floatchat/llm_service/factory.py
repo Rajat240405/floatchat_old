@@ -100,11 +100,13 @@ def build_llm_service(
     )
 
 
-def build_extractor_llm_service() -> AbstractLLMService:
-    """Build the LLM service used by the Priority-3 entity extractor.
+def build_compiler_llm_service() -> AbstractLLMService:
+    """Build the LLM service used by the intent compiler (resolver fallback).
 
-    Uses extractor-specific tuning (JSON mode, low temperature, short output)
-    for whichever provider is configured.
+    IntentResolver's LLMIntentCompiler is the only caller (Cleanup M2: the
+    legacy entity extractor was removed). Uses extraction-specific tuning
+    (JSON mode, low temperature, short output) for whichever provider is
+    configured.
     """
     return build_llm_service(
         json_mode=True,
