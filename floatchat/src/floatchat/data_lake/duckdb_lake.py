@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -169,20 +170,48 @@ class DuckDBDataLake(AbstractDataLake):
 
         self._conn: Any = None  # duckdb.DuckDBPyConnection — set lazily
         self._availability_cache: dict[str, Any] | None = None
+        logger.info(
+            "PIPELINE lake_instance: created instance_id=%s root=%s use_phase2=%s",
+            id(self),
+            self._lake_root,
+            self._use_phase2,
+        )
 
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
 
     def query(self, criteria: LakeQueryCriteria) -> LakeQueryResult:
-        """Execute a structured query against the Parquet lake via DuckDB."""
+        """Execute a structured query against the Parquet lake via DuckDB.
+
+        Instrumentation is intentionally observational: it reports query
+        planning, DuckDB execution, DataFrame materialization, and result
+        construction without changing query semantics.
+        """
+        t0 = time.perf_counter()
         if not self.is_available():
             logger.warning("Data lake not available; returning empty result")
             return LakeQueryResult(df=pd.DataFrame())
 
         conn = self._get_connection()
+        t_conn = time.perf_counter()
         df = self._execute_query(criteria, conn)
-        return self._build_result(df, criteria)
+        t_query = time.perf_counter()
+        result = self._build_result(df, criteria)
+        t_result = time.perf_counter()
+        logger.info(
+            "PIPELINE lake: connection_acquire=%.3fs duckdb_total=%.3fs "
+            "dataframe_result_build=%.3fs total=%.3fs rows=%d profiles=%d float=%s vars=%s",
+            t_conn - t0,
+            t_query - t_conn,
+            t_result - t_query,
+            t_result - t0,
+            len(df),
+            result.unique_profiles,
+            criteria.float_id,
+            criteria.variables,
+        )
+        return result
 
     def is_available(self) -> bool:
         """Check whether the Parquet lake exists and has at least one file."""
@@ -424,7 +453,17 @@ class DuckDBDataLake(AbstractDataLake):
             import duckdb
 
             self._conn = duckdb.connect(database=":memory:")
-            logger.info("DuckDB in-memory connection created for data lake")
+            logger.info(
+                "PIPELINE duckdb_connection: created lake_instance_id=%s connection_id=%s",
+                id(self),
+                id(self._conn),
+            )
+        else:
+            logger.debug(
+                "PIPELINE duckdb_connection: reused lake_instance_id=%s connection_id=%s",
+                id(self),
+                id(self._conn),
+            )
         return self._conn
 
     def _execute_query(
@@ -444,6 +483,7 @@ class DuckDBDataLake(AbstractDataLake):
 
         Priority 1C: NaN-safe variable presence filters.
         """
+        t_plan_start = time.perf_counter()
         # Build WHERE conditions as (clause, value) pairs
         where_parts: list[str] = []
         params: list[Any] = []
@@ -546,8 +586,23 @@ class DuckDBDataLake(AbstractDataLake):
         logger.debug("Data lake SQL: %s", sql)
         logger.debug("Data lake params: %s", params)
 
+        t_plan_end = time.perf_counter()
         try:
-            result_df = conn.execute(sql, params).fetchdf()
+            t_execute_start = time.perf_counter()
+            relation = conn.execute(sql, params)
+            t_execute_end = time.perf_counter()
+            result_df = relation.fetchdf()
+            t_dataframe_end = time.perf_counter()
+            logger.info(
+                "PIPELINE duckdb: query_planning=%.3fs execution=%.3fs "
+                "dataframe_creation=%.3fs rows=%d float=%s vars=%s",
+                t_plan_end - t_plan_start,
+                t_execute_end - t_execute_start,
+                t_dataframe_end - t_execute_end,
+                len(result_df),
+                criteria.float_id,
+                criteria.variables,
+            )
             logger.info("Data lake query returned %d rows", len(result_df))
             if result_df.empty:
                 # Priority 1D: Compact log line instead of massive diagnostic dump
@@ -576,7 +631,9 @@ class DuckDBDataLake(AbstractDataLake):
 
         Priority 1C: Uses _resolve_variable_column for canonical resolution.
         """
+        t_filter_start = time.perf_counter()
         if df.empty:
+            logger.info("PIPELINE dataframe_filtering=0.000s rows=0")
             return LakeQueryResult(df=df)
 
         if "date" in df.columns:
@@ -638,6 +695,14 @@ class DuckDBDataLake(AbstractDataLake):
                 return val.to_pydatetime()
             return val
 
+        logger.info(
+            "PIPELINE dataframe_filtering=%.3fs rows_in=%d rows_out=%d "
+            "profiles_out=%d",
+            time.perf_counter() - t_filter_start,
+            len(df),
+            len(df),
+            int(df[["float_id", "cycle_number"]].drop_duplicates().shape[0]),
+        )
         return LakeQueryResult(
             df=df,
             stats=stats,

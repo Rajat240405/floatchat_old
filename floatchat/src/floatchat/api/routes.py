@@ -14,7 +14,7 @@ import re
 import time
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from pathlib import Path
 
@@ -42,6 +42,7 @@ from floatchat.llm_service.classifier import QueryClassifier
 from floatchat.llm_service.knowledge_base import KnowledgeBase
 from floatchat.models import ChatResponse, ParsedIntent
 from floatchat.query_engine.engine import QueryEngine
+from floatchat.variable_registry.registry import VariableRegistry
 
 # Dedicated lightweight registry response for dashboard bootstrap (no chat/LLM)
 from pydantic import BaseModel
@@ -1018,12 +1019,27 @@ def _log_response(response: ChatResponse, request_t0: float) -> None:
     serialize_t1 = time.perf_counter()
 
     total_time = time.perf_counter() - request_t0
+
+    figures = []
+    if response.figure is not None:
+        figures.append(response.figure)
+    figures.extend(response.figures or [])
+    trace_count = sum(len(f.get("data", []) or []) for f in figures)
+    plotted_points = sum(
+        max(len(t.get("x", []) or []), len(t.get("y", []) or []))
+        for f in figures
+        for t in (f.get("data", []) or [])
+    )
     logger.info(
-        "Response ready: size=%.2f KB, serialize=%.3fs, total=%.3fs, "
-        "intent=%s, map_markers=%d, has_figure=%s",
-        len(json_bytes) / 1024,
+        "PIPELINE application_response_serialization: %.3fs total_to_route_return=%.3fs "
+        "payload=%.2fKB traces=%d plotted_points=%d rows_returned=%s "
+        "intent=%s map_markers=%d has_figure=%s",
         serialize_t1 - serialize_t0,
         total_time,
+        len(json_bytes) / 1024,
+        trace_count,
+        plotted_points,
+        response.data_summary.get("total_measurements"),
         response.intent,
         len(response.map_data),
         response.figure is not None,
@@ -1174,7 +1190,7 @@ def get_float_registry_endpoint():
             logger.warning("Registry position aggregation failed: %s", exc)
 
         _BGC_MARKERS = (
-            "DOXY", "CHLA", "NITRATE", "BBP", "PH", "PAR",
+            "DOXY", "CHLA", "NITRATE", "BBP", "PH", "PAR", "DOWNWELLING_PAR",
             "OPTODE", "FLUOROMETER", "BACKSCATTER", "SUNA", "ISUS", "OCR",
         )
 
@@ -1286,7 +1302,7 @@ def get_float_registry_endpoint():
         if not dacs:
             dacs = {"INCOIS", "Coriolis", "AOML"}
         if not variables:
-            variables = {"TEMP", "PSAL", "DOXY", "CHLA"}
+            variables = VariableRegistry.get_all_query_names()
         if not statuses:
             statuses = {"active", "inactive", "drifted"}
 
@@ -1312,7 +1328,7 @@ def get_float_registry_endpoint():
             map_data=[],
             networks=["Core Argo", "BGC Argo"],
             dacs=["INCOIS", "Coriolis", "AOML"],
-            variables=["TEMP", "PSAL", "DOXY", "CHLA"],
+            variables=sorted(VariableRegistry.get_all_query_names()),
             statuses=["active", "inactive", "drifted"],
         )
 
@@ -1678,10 +1694,22 @@ def get_float_latest_profile(float_id: str):
     from floatchat.config import settings
 
     clean = str(float_id).strip()
+    selected_profile = None
+    try:
+        lake = _get_lake()
+        profile_index = lake.get_profile_index(float_id=clean, limit=50000)
+        if not profile_index.empty and "cycle_number" in profile_index.columns:
+            cycles = profile_index["cycle_number"].dropna().astype(int)
+            if not cycles.empty:
+                selected_profile = int(cycles.max())
+    except Exception as exc:
+        logger.warning("Could not resolve latest profile for %s: %s", clean, exc)
+
     intent = ParsedIntent(
         intent="profile_plot",
         float_id=clean,
-        variables=["TEMP", "PSAL", "DOXY", "CHLA"],
+        variables=sorted(VariableRegistry.get_all_query_names() - {"PRES"}),
+        profile_number=selected_profile,
         limit=1,
     )
 
@@ -1741,10 +1769,10 @@ _VAR_TITLES = {
     "PSAL": "Salinity",
     "DOXY": "Oxygen",
     "CHLA": "Chlorophyll",
-    "NITRATE": "Nitrate",
-    "BBP700": "Backscatter 700 nm",
-    "PH_IN_SITU_TOTAL": "pH",
-    "DOWNWELLING_PAR": "Downwelling PAR",
+    "NITRATE": "Nitrate (µmol kg⁻¹)",
+    "BBP700": "Particle Backscattering 700 nm (m⁻¹)",
+    "PH_IN_SITU_TOTAL": "In-situ pH (total scale)",
+    "DOWNWELLING_PAR": "Downwelling PAR (µmol photons m⁻² s⁻¹)",
     "PRES": "Pressure",
 }
 
@@ -1893,7 +1921,11 @@ def get_float_available_plots(float_id: str):
 
 
 @router.get("/floats/{float_id}/plot", response_model=FloatProfileAPIResponse)
-def get_float_plot(float_id: str, variable: str = "TEMP"):
+def get_float_plot(
+    float_id: str,
+    variable: str = "TEMP",
+    profile_number: int | None = Query(default=None, ge=1),
+):
     """Render a deterministic profile plot for one variable. No LLM. No chat."""
     from floatchat.models import ParsedIntent
     from floatchat.query_engine.engine import QueryEngine
@@ -1908,11 +1940,26 @@ def get_float_plot(float_id: str, variable: str = "TEMP"):
     if not var:
         var = "TEMP"
 
+    # A plot request without an explicit cycle uses the latest known cycle as
+    # a backward-compatible default. It never silently retrieves 100 cycles.
+    selected_profile = profile_number
+    if selected_profile is None:
+        try:
+            lake = _get_lake()
+            profile_index = lake.get_profile_index(float_id=clean, limit=50000)
+            if not profile_index.empty and "cycle_number" in profile_index.columns:
+                cycles = profile_index["cycle_number"].dropna().astype(int)
+                if not cycles.empty:
+                    selected_profile = int(cycles.max())
+        except Exception as exc:
+            logger.warning("Could not resolve latest profile for %s: %s", clean, exc)
+
     intent = ParsedIntent(
         intent="profile_plot",
         float_id=clean,
         variables=[var],
-        limit=5,  # a few recent profiles for a readable multi-cycle overlay
+        profile_number=selected_profile,
+        limit=1,
     )
 
     prev_flag = getattr(settings, "sci_narrator_enabled", True)
@@ -1937,6 +1984,11 @@ def get_float_plot(float_id: str, variable: str = "TEMP"):
     finally:
         settings.sci_narrator_enabled = prev_flag
 
+    response.data_summary = {
+        **(response.data_summary or {}),
+        "profile_number": selected_profile,
+        "float_id": clean,
+    }
     title = _VAR_TITLES.get(var, var)
     msg = response.message or f"{title} profile for float {clean}."
     while msg.endswith("\n"):

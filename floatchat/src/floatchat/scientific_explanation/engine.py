@@ -19,6 +19,7 @@ import pandas as pd
 from ..config import settings
 from ..models.intent import ParsedIntent
 from ..models.metadata import MetadataRecord
+from ..variable_registry.registry import VariableRegistry
 
 if TYPE_CHECKING:
     from .features import ScientificFeatureExtractor
@@ -68,6 +69,10 @@ class ScientificExplanationEngine:
             "QC": "QC flag 1 = good; 2 = probably good; 3 = bad but correctable; 4 = bad. Always prefer adjusted variables in delayed-mode (D) files.",
             "DELAYED_MODE": "Delayed-mode (D) data has expert QC and adjustments. Real-time (R) data is preliminary and may contain sensor drift.",
             "OMZ": "Arabian Sea and Bay of Bengal naturally contain Oxygen Minimum Zones (OMZs) between ~100-1000 m due to high respiration and limited ventilation.",
+            "NITRATE": "Nitrate is a macronutrient used by phytoplankton; its vertical structure reflects uptake near the surface and remineralization at depth.",
+            "BBP700": "Particle backscattering at 700 nm is an optical proxy for suspended particulate material and particle abundance.",
+            "PH_IN_SITU_TOTAL": "In-situ pH on the total scale describes seawater acid-base conditions and is reported without physical concentration units.",
+            "DOWNWELLING_PAR": "Downwelling PAR measures photosynthetically active light in the water column and generally decreases with depth.",
         }
 
     def _get_variable_column(self, df: pd.DataFrame, var_name: str) -> Optional[str]:
@@ -344,7 +349,8 @@ class ScientificExplanationEngine:
             if var not in stats:
                 continue
             s = stats[var]
-            v_name = var.replace("_", " ").title()
+            definition = VariableRegistry.get(var)
+            v_name = definition.display_label if definition else var.replace("_", " ").title()
 
             if "TEMP" in var.upper():
                 if math.isfinite(s["surface"]):

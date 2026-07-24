@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from floatchat.variable_registry.registry import VariableRegistry
+
 
 class ParsedIntent(BaseModel):
     """Structured representation of a user's natural-language request.
@@ -103,7 +105,7 @@ class ParsedIntent(BaseModel):
     def _uppercase_variables(cls, v: list[str]) -> list[str]:
         """Normalise variable names to uppercase Argo conventions."""
         if isinstance(v, list):
-            return [str(item).strip().upper() for item in v]
+            return [VariableRegistry.normalize(str(item)) for item in v]
         return v
 
     @field_validator("region")

@@ -4,8 +4,10 @@ Renders one or more BGC variables versus pressure.
 Fix: Shows separate subplots per variable in grid layout (max 3 cols), each with QC-aware colors.
 """
 
+import json
 import logging
 import math
+import time
 from typing import Any
 
 import numpy as np
@@ -25,7 +27,7 @@ _VAR_TITLES: dict[str, str] = {
     "BBP700": "Particle Backscattering 700 nm (m⁻¹)",
     "NITRATE": "Nitrate (µmol kg⁻¹)",
     "PH_IN_SITU_TOTAL": "pH (total scale)",
-    "DOWNWELLING_PAR": "Downwelling PAR",
+    "DOWNWELLING_PAR": "Downwelling PAR (µmol photons m⁻² s⁻¹)",
     "DOWN_IRRADIANCE380": "Irradiance 380 nm",
     "DOWN_IRRADIANCE412": "Irradiance 412 nm",
     "DOWN_IRRADIANCE490": "Irradiance 490 nm",
@@ -39,6 +41,16 @@ _COLOURS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#
 def _qc_to_alpha(qc: str) -> float:
     mapping = {"1": 1.0, "2": 0.8, "3": 0.4, "4": 0.2}
     return mapping.get(str(qc).strip(), 0.5)
+
+
+def _figure_metrics(payload: dict[str, Any]) -> tuple[int, int, int]:
+    """Return (trace_count, plotted_points, serialized_bytes) for diagnostics."""
+    traces = payload.get("data", []) or []
+    points = 0
+    for trace in traces:
+        points += max(len(trace.get("x", []) or []), len(trace.get("y", []) or []))
+    serialized_bytes = len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    return len(traces), points, serialized_bytes
 
 
 def _hex_to_rgba(hex_colour: str, alpha: float) -> str:
@@ -86,6 +98,8 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         if "PRES" not in df.columns:
             raise VisualizationError("Missing PRES")
 
+        t_plot_start = time.perf_counter()
+        t_prepare_start = t_plot_start
         variables = intent.variables or []
         if not variables:
             exclude = {"PRES", "profile_idx", "level_idx"}
@@ -108,7 +122,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
 
         if not available and not intent.variables:
             # Fallback to any known var that exists
-            for cand in ["TEMP", "PSAL", "DOXY", "CHLA", "BBP700", "NITRATE", "PH_IN_SITU_TOTAL"]:
+            for cand in ["TEMP", "PSAL", "DOXY", "CHLA", "BBP700", "NITRATE", "PH_IN_SITU_TOTAL", "DOWNWELLING_PAR"]:
                 if cand in df.columns and df[cand].notna().any():
                     available.append(cand)
                 elif f"{cand}_ADJUSTED" in df.columns and df[f"{cand}_ADJUSTED"].notna().any():
@@ -117,10 +131,12 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         if not available:
             raise VisualizationError(f"No requested vars found: {variables}", details={"columns": list(df.columns)})
 
+        t_prepare_end = time.perf_counter()
         n_vars = len(available)
         cols = min(3, n_vars)
         rows = math.ceil(n_vars / cols)
 
+        t_construct_start = time.perf_counter()
         fig = make_subplots(
             rows=rows,
             cols=cols,
@@ -131,8 +147,19 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
             subplot_titles=[_VAR_TITLES.get(v, v) for v in available],
         )
 
-        group_col = "float_id" if "float_id" in df.columns else "profile_idx"
-        groups = sorted(df[group_col].dropna().unique())[:8]
+        # A scientific profile is identified by (float_id, cycle_number), not
+        # by float alone. Keep the composite key local to visualization so
+        # multiple cycles cannot be merged into one trace.
+        plot_df = df
+        if "float_id" in df.columns and "cycle_number" in df.columns:
+            plot_df = df.copy()
+            plot_df["_plot_profile_key"] = (
+                plot_df["float_id"].astype(str) + "::" + plot_df["cycle_number"].astype(str)
+            )
+            group_col = "_plot_profile_key"
+        else:
+            group_col = "float_id" if "float_id" in df.columns else "profile_idx"
+        groups = sorted(plot_df[group_col].dropna().unique())[:8]
 
         for idx, var in enumerate(available):
             r = idx // cols + 1
@@ -152,7 +179,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
             has_qc = qc_col is not None and qc_col in df.columns
 
             for g_idx, g_val in enumerate(groups):
-                sub = df[df[group_col] == g_val].sort_values("PRES", ascending=True)
+                sub = plot_df[plot_df[group_col] == g_val].sort_values("PRES", ascending=True)
                 sub = sub.dropna(subset=[actual_col, "PRES"])
                 if sub.empty:
                     continue
@@ -169,6 +196,10 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                 if group_col == "float_id":
                     hover = [f"Float: {g_val}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
                     name = f"Float {g_val}"
+                elif group_col == "_plot_profile_key":
+                    profile_float, profile_cycle = str(g_val).split("::", 1)
+                    hover = [f"Float: {profile_float}<br>Cycle: {profile_cycle}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
+                    name = f"Float {profile_float} · Cycle {profile_cycle}"
                 else:
                     hover = [f"Profile: {g_val}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
                     name = f"Profile {g_val}"
@@ -229,7 +260,25 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
             margin=dict(l=70, r=30, t=80, b=100),
         )
 
-        return _sanitize_for_json(fig.to_dict())
+        t_construct_end = time.perf_counter()
+        t_serialize_start = time.perf_counter()
+        payload = _sanitize_for_json(fig.to_dict())
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        t_serialize_end = time.perf_counter()
+        trace_count, plotted_points, payload_bytes = _figure_metrics(payload)
+        logger.info(
+            "PIPELINE plot: data_preparation=%.3fs figure_construction=%.3fs "
+            "figure_json_serialization=%.3fs traces=%d plotted_points=%d "
+            "payload=%.2fKB input_rows=%d",
+            t_prepare_end - t_prepare_start,
+            t_construct_end - t_construct_start,
+            t_serialize_end - t_serialize_start,
+            trace_count,
+            plotted_points,
+            payload_bytes / 1024,
+            len(df),
+        )
+        return payload
 
     def render_per_variable(self, intent: ParsedIntent, df: pd.DataFrame) -> list[dict[str, Any]]:
         """Render a list of standalone per-variable figures for the stacked plot drawer.
@@ -241,6 +290,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         per-variable vertical profiles (time_series, hovmoller, ts_diagram,
         comparison, trajectory) return an empty list.
         """
+        t_per_var_start = time.perf_counter()
         if intent.intent in (
             "trajectory",
             "time_series",
@@ -271,7 +321,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         available = list(dict.fromkeys(available))
 
         if not available and not intent.variables:
-            for cand in ["TEMP", "PSAL", "DOXY", "CHLA", "BBP700", "NITRATE", "PH_IN_SITU_TOTAL"]:
+            for cand in ["TEMP", "PSAL", "DOXY", "CHLA", "BBP700", "NITRATE", "PH_IN_SITU_TOTAL", "DOWNWELLING_PAR"]:
                 if cand in df.columns and df[cand].notna().any():
                     available.append(cand)
                 elif f"{cand}_ADJUSTED" in df.columns and df[f"{cand}_ADJUSTED"].notna().any():
@@ -279,8 +329,19 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         if not available:
             return []
 
-        group_col = "float_id" if "float_id" in df.columns else "profile_idx"
-        groups = sorted(df[group_col].dropna().unique())[:8]
+        # A scientific profile is identified by (float_id, cycle_number), not
+        # by float alone. Keep the composite key local to visualization so
+        # multiple cycles cannot be merged into one trace.
+        plot_df = df
+        if "float_id" in df.columns and "cycle_number" in df.columns:
+            plot_df = df.copy()
+            plot_df["_plot_profile_key"] = (
+                plot_df["float_id"].astype(str) + "::" + plot_df["cycle_number"].astype(str)
+            )
+            group_col = "_plot_profile_key"
+        else:
+            group_col = "float_id" if "float_id" in df.columns else "profile_idx"
+        groups = sorted(plot_df[group_col].dropna().unique())[:8]
 
         figures: list[dict[str, Any]] = []
         for var in available:
@@ -297,7 +358,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
 
             fig = go.Figure()
             for g_idx, g_val in enumerate(groups):
-                sub = df[df[group_col] == g_val].sort_values("PRES", ascending=True)
+                sub = plot_df[plot_df[group_col] == g_val].sort_values("PRES", ascending=True)
                 sub = sub.dropna(subset=[actual_col, "PRES"])
                 if sub.empty:
                     continue
@@ -313,6 +374,10 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
                 if group_col == "float_id":
                     hover = [f"Float: {g_val}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
                     name = f"Float {g_val}"
+                elif group_col == "_plot_profile_key":
+                    profile_float, profile_cycle = str(g_val).split("::", 1)
+                    hover = [f"Float: {profile_float}<br>Cycle: {profile_cycle}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
+                    name = f"Float {profile_float} · Cycle {profile_cycle}"
                 else:
                     hover = [f"Profile: {g_val}<br>PRES: {p:.1f}<br>{var}: {v:.3f}" for p, v in zip(pres, vals)]
                     name = f"Profile {g_val}"
@@ -358,6 +423,24 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
             payload["variable"] = var
             figures.append(payload)
 
+        total_traces = 0
+        total_points = 0
+        total_bytes = 0
+        for payload in figures:
+            traces, points, size = _figure_metrics(payload)
+            total_traces += traces
+            total_points += points
+            total_bytes += size
+        logger.info(
+            "PIPELINE per_variable_plots: total=%.3fs figures=%d traces=%d "
+            "plotted_points=%d payload=%.2fKB input_rows=%d",
+            time.perf_counter() - t_per_var_start,
+            len(figures),
+            total_traces,
+            total_points,
+            total_bytes / 1024,
+            len(df),
+        )
         return figures
 
     @staticmethod

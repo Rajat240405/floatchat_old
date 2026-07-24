@@ -1,10 +1,9 @@
-"""Centralized Variable Registry for FloatChat Phase 22.
+"""Centralized Variable Registry for FloatChat.
 
-Updated per INCOIS scientific guidance:
-- Core variables → Core index
-- BGC variables → Bio index
-- Mixed queries → both indexes
-- Synthetic is now optional fallback only
+This registry is the application-facing vocabulary for variables present in the
+Phase 2 data lake.  Adjusted variables are represented as a preferred storage
+variant of their canonical variable: query execution automatically prefers the
+adjusted column when it contains valid data.
 """
 
 from dataclasses import dataclass, field
@@ -13,12 +12,13 @@ from typing import List, Literal, Optional, Set
 
 @dataclass(frozen=True)
 class VariableDefinition:
-    """Complete scientific definition of an Argo variable."""
+    """Scientific and presentation metadata for one canonical variable."""
 
     canonical: str
     category: Literal["core", "bgc_primary", "intermediate"]
     description: str
     units: str
+    display_label: str
     aliases: List[str] = field(default_factory=list)
     abbreviations: List[str] = field(default_factory=list)
     preferred_metadata_index: Literal["core", "bio", "synthetic"] = "core"
@@ -30,142 +30,87 @@ class VariableDefinition:
 
 
 class VariableRegistry:
-    """Single source of truth for all supported Argo variables."""
+    """Single source of truth for supported application variables."""
 
     _REGISTRY: dict[str, VariableDefinition] = {
-        # Core variables
+        "PRES": VariableDefinition(
+            "PRES", "core", "Sea water pressure", "dbar", "Pressure (dbar)",
+            ["pressure", "depth", "pres"], ["p"], "core", "R",
+            "PRES_ADJUSTED", "PRES_QC", "PRES_ADJUSTED_ERROR",
+        ),
         "TEMP": VariableDefinition(
-            canonical="TEMP",
-            category="core",
-            description="Sea water temperature (ITS-90)",
-            units="degree_Celsius",
-            aliases=["temperature", "temp"],
-            abbreviations=["temp"],
-            preferred_metadata_index="core",
-            preferred_profile_type="R",
-            adjusted_name="TEMP_ADJUSTED",
-            qc_name="TEMP_QC",
-            error_name="TEMP_ADJUSTED_ERROR",
+            "TEMP", "core", "Sea water temperature (ITS-90)", "°C", "Temperature (°C)",
+            ["temperature", "temp", "water temperature", "water temp", "sea temperature"],
+            ["sst"], "core", "R", "TEMP_ADJUSTED", "TEMP_QC", "TEMP_ADJUSTED_ERROR",
         ),
         "PSAL": VariableDefinition(
-            canonical="PSAL",
-            category="core",
-            description="Practical salinity",
-            units="psu",
-            aliases=["salinity", "psal"],
-            abbreviations=["psal"],
-            preferred_metadata_index="core",
-            preferred_profile_type="R",
-            adjusted_name="PSAL_ADJUSTED",
-            qc_name="PSAL_QC",
-            error_name="PSAL_ADJUSTED_ERROR",
+            "PSAL", "core", "Practical salinity", "PSU", "Practical Salinity (PSU)",
+            ["salinity", "psal", "salt", "water salinity"], [], "core", "R",
+            "PSAL_ADJUSTED", "PSAL_QC", "PSAL_ADJUSTED_ERROR",
         ),
-        "PRES": VariableDefinition(
-            canonical="PRES",
-            category="core",
-            description="Sea water pressure",
-            units="dbar",
-            aliases=["pressure", "pres"],
-            abbreviations=["pres"],
-            preferred_metadata_index="core",
-            preferred_profile_type="R",
-            adjusted_name="PRES_ADJUSTED",
-            qc_name="PRES_QC",
-            error_name="PRES_ADJUSTED_ERROR",
-        ),
-        # BGC Primary variables
         "DOXY": VariableDefinition(
-            canonical="DOXY",
-            category="bgc_primary",
-            description="Dissolved oxygen concentration",
-            units="umol/kg",
-            aliases=["oxygen", "dissolved oxygen", "doxy", "o2"],
-            abbreviations=["dox", "o2"],
-            preferred_metadata_index="bio",
-            preferred_profile_type="B",
-            adjusted_name="DOXY_ADJUSTED",
-            qc_name="DOXY_QC",
-            error_name="DOXY_ADJUSTED_ERROR",
+            "DOXY", "bgc_primary", "Dissolved oxygen concentration", "µmol/kg", "Dissolved Oxygen (µmol kg⁻¹)",
+            ["oxygen", "dissolved oxygen", "doxy", "dissolved o2", "oxygen concentration"],
+            ["o2", "dox"], "bio", "B", "DOXY_ADJUSTED", "DOXY_QC", "DOXY_ADJUSTED_ERROR",
         ),
         "CHLA": VariableDefinition(
-            canonical="CHLA",
-            category="bgc_primary",
-            description="Chlorophyll-a concentration",
-            units="mg/m^3",
-            aliases=["chlorophyll", "chlorophyll-a", "chla"],
-            abbreviations=["chl"],
-            preferred_metadata_index="bio",
-            preferred_profile_type="B",
-            adjusted_name="CHLA_ADJUSTED",
-            qc_name="CHLA_QC",
-            error_name="CHLA_ADJUSTED_ERROR",
+            "CHLA", "bgc_primary", "Chlorophyll-a concentration", "mg/m³", "Chlorophyll-a (mg m⁻³)",
+            ["chlorophyll", "chlorophyll-a", "chlorophyll a", "chla", "phytoplankton"],
+            ["chl", "chl-a"], "bio", "B", "CHLA_ADJUSTED", "CHLA_QC", "CHLA_ADJUSTED_ERROR",
         ),
         "BBP700": VariableDefinition(
-            canonical="BBP700",
-            category="bgc_primary",
-            description="Particle backscattering at 700nm",
-            units="m^-1",
-            aliases=["backscatter", "bbp700"],
-            preferred_metadata_index="bio",
-            preferred_profile_type="B",
-            adjusted_name="BBP700_ADJUSTED",
-            qc_name="BBP700_QC",
-            error_name="BBP700_ADJUSTED_ERROR",
+            "BBP700", "bgc_primary", "Particle backscattering at 700 nm", "m⁻¹", "Particle Backscattering 700 nm (m⁻¹)",
+            ["backscatter", "backscattering", "particle backscatter", "particle backscattering", "particulate backscatter", "bbp700"],
+            ["bbp"], "bio", "B", "BBP700_ADJUSTED", "BBP700_QC", "BBP700_ADJUSTED_ERROR",
         ),
         "NITRATE": VariableDefinition(
-            canonical="NITRATE",
-            category="bgc_primary",
-            description="Nitrate concentration",
-            units="umol/kg",
-            aliases=["nitrate", "no3"],
-            preferred_metadata_index="bio",
-            preferred_profile_type="B",
-            adjusted_name="NITRATE_ADJUSTED",
-            qc_name="NITRATE_QC",
-            error_name="NITRATE_ADJUSTED_ERROR",
+            "NITRATE", "bgc_primary", "Nitrate concentration", "µmol/kg", "Nitrate (µmol kg⁻¹)",
+            ["nitrate", "nitrate concentration", "no3", "nitrogen"], [], "bio", "B",
+            "NITRATE_ADJUSTED", "NITRATE_QC", "NITRATE_ADJUSTED_ERROR",
         ),
         "PH_IN_SITU_TOTAL": VariableDefinition(
-            canonical="PH_IN_SITU_TOTAL",
-            category="bgc_primary",
-            description="pH (total scale)",
-            units="dimensionless",
-            aliases=["ph", "ph in situ total"],
-            preferred_metadata_index="bio",
-            preferred_profile_type="B",
-            adjusted_name="PH_IN_SITU_TOTAL_ADJUSTED",
-            qc_name="PH_IN_SITU_TOTAL_QC",
-            error_name="PH_IN_SITU_TOTAL_ADJUSTED_ERROR",
+            "PH_IN_SITU_TOTAL", "bgc_primary", "In-situ pH on the total scale", "total scale", "In-situ pH (total scale)",
+            ["ph", "pH", "ph level", "acidity", "in situ ph", "ph in situ total"], [], "bio", "B",
+            "PH_IN_SITU_TOTAL_ADJUSTED", "PH_IN_SITU_TOTAL_QC", "PH_IN_SITU_TOTAL_ADJUSTED_ERROR",
         ),
-        # Intermediate variables
+        "DOWNWELLING_PAR": VariableDefinition(
+            "DOWNWELLING_PAR", "bgc_primary", "Downwelling photosynthetically active radiation", "µmol photons m⁻² s⁻¹", "Downwelling PAR (µmol photons m⁻² s⁻¹)",
+            ["par", "downwelling par", "photosynthetically active radiation", "photosynthetic radiation", "underwater sunlight"], [], "bio", "B",
+            "DOWNWELLING_PAR_ADJUSTED", "DOWNWELLING_PAR_QC", "DOWNWELLING_PAR_ADJUSTED_ERROR",
+        ),
         "TEMP_DOXY": VariableDefinition(
-            canonical="TEMP_DOXY",
-            category="intermediate",
-            description="Optode thermistor temperature (diagnostic)",
-            units="degree_Celsius",
-            is_intermediate=True,
-            preferred_metadata_index="bio",
-            preferred_profile_type="B",
+            "TEMP_DOXY", "intermediate", "Optode thermistor temperature (diagnostic)", "°C", "Optode Temperature (°C)",
+            ["optode temperature"], [], "bio", "B", is_intermediate=True,
         ),
     }
 
     @classmethod
-    def get(cls, name: str) -> Optional[VariableDefinition]:
-        name = name.upper()
-        if name in cls._REGISTRY:
-            return cls._REGISTRY[name]
-        for var in cls._REGISTRY.values():
-            if name in [a.upper() for a in var.aliases + var.abbreviations]:
-                return var
+    def get(cls, name: str | None) -> Optional[VariableDefinition]:
+        if not name:
+            return None
+        normalized = str(name).strip().upper()
+        if normalized.endswith("_ADJUSTED"):
+            normalized = normalized.removesuffix("_ADJUSTED")
+        if normalized in cls._REGISTRY:
+            return cls._REGISTRY[normalized]
+        for definition in cls._REGISTRY.values():
+            if normalized in {a.upper() for a in definition.aliases + definition.abbreviations}:
+                return definition
         return None
 
     @classmethod
-    def classify_variables(cls, variables: List[str]) -> dict:
-        core_vars = []
-        bgc_vars = []
-        intermediates = []
+    def normalize(cls, name: str) -> str:
+        """Return the canonical query name; adjusted requests map to their base."""
+        definition = cls.get(name)
+        return definition.canonical if definition else str(name).strip().upper()
 
-        for v in variables:
-            definition = cls.get(v)
+    @classmethod
+    def classify_variables(cls, variables: List[str]) -> dict:
+        core_vars: list[str] = []
+        bgc_vars: list[str] = []
+        intermediates: list[str] = []
+        for value in variables:
+            definition = cls.get(value)
             if not definition:
                 continue
             if definition.category == "core":
@@ -174,33 +119,18 @@ class VariableRegistry:
                 bgc_vars.append(definition.canonical)
             elif definition.is_intermediate:
                 intermediates.append(definition.canonical)
-
         if core_vars and bgc_vars:
-            strategy = "both"
-            metadata_index = "both"
-            profile_type = "both"
+            strategy, index, profile = "both", "both", "both"
         elif core_vars:
-            strategy = "core"
-            metadata_index = "core"
-            profile_type = "R"
+            strategy, index, profile = "core", "core", "R"
         else:
-            strategy = "bio"
-            metadata_index = "bio"
-            profile_type = "B"
-
-        return {
-            "core": core_vars,
-            "bgc": bgc_vars,
-            "intermediates": intermediates,
-            "strategy": strategy,
-            "metadata_index": metadata_index,
-            "profile_type": profile_type,
-        }
+            strategy, index, profile = "bio", "bio", "B"
+        return {"core": core_vars, "bgc": bgc_vars, "intermediates": intermediates,
+                "strategy": strategy, "metadata_index": index, "profile_type": profile}
 
     @classmethod
     def get_preferred_index(cls, variables: List[str]) -> str:
-        classification = cls.classify_variables(variables)
-        return classification["metadata_index"]
+        return cls.classify_variables(variables)["metadata_index"]
 
     @classmethod
     def is_valid_variable(cls, name: str) -> bool:
@@ -209,3 +139,7 @@ class VariableRegistry:
     @classmethod
     def get_all_canonical_names(cls) -> Set[str]:
         return set(cls._REGISTRY.keys())
+
+    @classmethod
+    def get_all_query_names(cls) -> Set[str]:
+        return {d.canonical for d in cls._REGISTRY.values() if not d.is_intermediate}

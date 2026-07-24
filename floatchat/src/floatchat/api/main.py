@@ -5,6 +5,8 @@ Phase 23: Cleans up expired NetCDF cache files on startup.
 """
 
 from contextlib import asynccontextmanager
+import logging
+import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +28,45 @@ from floatchat.models import ErrorResponse
 from floatchat.repository_service.gdac_http import cleanup_expired_netcdf_cache
 
 # Mapping of domain exceptions to HTTP status codes.
+logger = logging.getLogger(__name__)
+
+
+class ResponseTimingMiddleware:
+    """Observational ASGI timing for response bytes and total request time."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        started = time.perf_counter()
+        response_status = None
+        body_chunks: list[bytes] = []
+
+        async def timed_send(message):
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = message.get("status")
+            elif message["type"] == "http.response.body":
+                body_chunks.append(message.get("body", b""))
+            await send(message)
+
+        await self.app(scope, receive, timed_send)
+        body_size = sum(len(chunk) for chunk in body_chunks)
+        logger.info(
+            "PIPELINE http: path=%s status=%s total_until_body_send=%.3fs "
+            "response_bytes=%d response_payload=%.2fKB",
+            scope.get("path", ""),
+            response_status,
+            time.perf_counter() - started,
+            body_size,
+            body_size / 1024,
+        )
+
+
 _EXCEPTION_STATUS_MAP: dict[type[FloatChatError], int] = {
     IntentParseError: 400,
     MetadataError: 503,
@@ -73,6 +114,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.add_middleware(ResponseTimingMiddleware)
 
     # CORS — allow frontend dev server to connect directly.
     app.add_middleware(

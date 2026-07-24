@@ -9,6 +9,7 @@ The legacy GDAC pipeline (RetrievalPlanner → metadata_service → repository_s
 FLOATCHAT_ALLOW_REMOTE_GDAC_FALLBACK=True (default: False).
 """
 
+import json
 import logging
 import math
 import dataclasses
@@ -39,6 +40,21 @@ if TYPE_CHECKING:
     from floatchat.data_lake.base import AbstractDataLake
 
 logger = logging.getLogger(__name__)
+
+
+def _figure_metrics(figures: list[dict[str, Any]] | None) -> tuple[int, int, int]:
+    """Return trace count, plotted point count, and compact JSON bytes."""
+    traces = 0
+    points = 0
+    payload = 0
+    for figure in figures or []:
+        data = figure.get("data", []) or []
+        traces += len(data)
+        for trace in data:
+            points += max(len(trace.get("x", []) or []), len(trace.get("y", []) or []))
+        payload += len(json.dumps(figure, separators=(",", ":")).encode("utf-8"))
+    return traces, points, payload
+
 
 # All data intents that MUST go through the local data lake
 _DATA_INTENTS = frozenset({
@@ -1143,6 +1159,7 @@ class QueryEngine:
         """
         from floatchat.data_lake.base import LakeQueryCriteria
 
+        t_planning_start = time.perf_counter()
         lake = self._get_data_lake()
         if lake is None or not (lake.is_available() or lake.is_phase2_available()):
             # Priority 1A: Check if remote fallback is allowed
@@ -1165,7 +1182,14 @@ class QueryEngine:
 
         # Map ParsedIntent → LakeQueryCriteria
         # Priority 1A: Use data_lake_max_profiles instead of legacy 5
-        query_limit = settings.data_lake_max_profiles
+        # A profile-aware request must never use the broad multi-profile limit.
+        # The cycle predicate is also applied inside DuckDB via criteria.
+        query_limit = (
+            1
+            if intent.profile_number is not None
+            or (intent.intent == "profile_plot" and intent.float_id)
+            else settings.data_lake_max_profiles
+        )
 
         # Convert point + radius to bounding box for spatial measurement queries.
         # Triggered when a place name was geocoded (lat/lon set) but no explicit
@@ -1211,6 +1235,15 @@ class QueryEngine:
             depth_max=intent.depth_max,
         )
 
+        t_planning_end = time.perf_counter()
+        logger.info(
+            "PIPELINE planning: %.3fs float=%s profile=%s vars=%s limit=%d",
+            t_planning_end - t_planning_start,
+            intent.float_id,
+            intent.profile_number,
+            intent.variables,
+            query_limit,
+        )
         t_lake = time.perf_counter()
         lake_result = None
         if intent.intent in ("comparison", "comparison_plot") and len(intent.comparison_float_ids) >= 2:
@@ -1264,6 +1297,7 @@ class QueryEngine:
                 },
             )
 
+        t_df_start = time.perf_counter()
         df = lake_result.df.copy()
         df["profile_date"] = pd.to_datetime(df["date"], errors="coerce")
 
@@ -1299,6 +1333,14 @@ class QueryEngine:
             if low in df.columns and up not in df.columns:
                 df[up] = df[low]
 
+        logger.info(
+            "PIPELINE dataframe_postprocessing: %.3fs rows_in=%d rows_out=%d columns=%d",
+            time.perf_counter() - t_df_start,
+            lake_result.total_measurements,
+            len(df),
+            len(df.columns),
+        )
+
         # Build map_data from the ACTUAL filtered DataFrame — guarantees map
         # markers match the data that was queried and returned. Previous approach
         # used a separate get_map_markers query which could return different
@@ -1332,6 +1374,22 @@ class QueryEngine:
             except Exception as exc:
                 logger.warning("Per-variable figure render failed: %s", exc)
                 figures = None
+
+        combined_metrics = _figure_metrics([figure] if figure else None)
+        drawer_metrics = _figure_metrics(figures)
+        logger.info(
+            "PIPELINE plot_output: render_total=%.3fs combined_traces=%d "
+            "combined_points=%d combined_payload=%.2fKB drawer_traces=%d "
+            "drawer_points=%d drawer_payload=%.2fKB rows_plotted_input=%d",
+            t_viz_end - t_viz_t0,
+            combined_metrics[0],
+            combined_metrics[1],
+            combined_metrics[2] / 1024,
+            drawer_metrics[0],
+            drawer_metrics[1],
+            drawer_metrics[2] / 1024,
+            len(df),
+        )
 
         # --- Scientific Explanation --- #
         t_sci_t0 = time.perf_counter()
