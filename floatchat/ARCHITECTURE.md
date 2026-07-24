@@ -14,6 +14,11 @@
 >   `intent_resolution/` `IntentResolver` (regex with optional structured LLM
 >   compiler fallback). The `intent_parser/` Mock/Regex/Ollama classes here are
 >   legacy, exercised mainly by their own tests.
+> - **API layer (Cleanup M3)**: `api/routes.py` was decomposed into thin
+>   routers (`api/routes/chat.py`, `api/routes/floats.py`, `api/routes/health.py`)
+>   over application services (`api/services/chat_service.py`,
+>   `floats_service.py`, `health_service.py`); HTTP schemas live in
+>   `api/schemas.py`. Endpoints and payloads are unchanged.
 > - **Additional modules** not covered here: `retrieval_planner/`,
 >   `scientific_explanation/` (narration pipeline), `conversation/`,
 >   `llm_service/` (classifier, knowledge base), `query_normalizer/`,

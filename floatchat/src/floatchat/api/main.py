@@ -18,6 +18,7 @@ from floatchat.api.dependencies import (
     initialize_runtime_services,
 )
 from floatchat.api.routes import router
+from floatchat.api.routes.health import router as health_router
 from floatchat.config import settings
 from floatchat.exceptions import (
     FloatChatError,
@@ -92,38 +93,6 @@ def _make_exception_handler(status_code: int):
     return _handler
 
 
-def _runtime_lake_readiness() -> dict[str, bool]:
-    """Report DuckDB/Parquet readiness without loading GDAC metadata."""
-    try:
-        from floatchat.api.dependencies import get_data_lake
-
-        lake = get_data_lake()
-        levels_ready = lake.is_available()
-        phase2_root = getattr(lake, "_phase2_root", None)
-        profile_index_ready = bool(
-            phase2_root
-            and (phase2_root / "parquet" / "profile_index").exists()
-        )
-        float_registry_ready = bool(
-            phase2_root
-            and (phase2_root / "parquet" / "float_registry").exists()
-        )
-        return {
-            "duckdb_ready": levels_ready,
-            "float_registry_ready": float_registry_ready,
-            "profile_index_ready": profile_index_ready,
-            "levels_ready": levels_ready,
-        }
-    except Exception as exc:
-        logger.warning("Runtime lake readiness check failed: %s", exc)
-        return {
-            "duckdb_ready": False,
-            "float_registry_ready": False,
-            "profile_index_ready": False,
-            "levels_ready": False,
-        }
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler.
@@ -196,17 +165,9 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=500, content=body.model_dump())
 
     app.include_router(router, prefix="/api/v1")
-
-    @app.get("/health")
-    def health() -> JSONResponse:
-        readiness = _runtime_lake_readiness()
-        return JSONResponse(
-            content={
-                "status": "ok" if readiness["duckdb_ready"] else "degraded",
-                **readiness,
-                "gdac_runtime_enabled": settings.enable_gdac_runtime,
-            }
-        )
+    # Cleanup M3: /health now lives in the route layer (api/routes/health.py),
+    # backed by api/services/health_service.py. Path and payload unchanged.
+    app.include_router(health_router)
 
     return app
 

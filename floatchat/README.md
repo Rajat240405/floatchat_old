@@ -109,6 +109,8 @@ floatchat/
 │   ├── config.py
 │   ├── exceptions.py
 │   ├── logging_config.py
+│   ├── api/              # schemas.py, routes/ (thin: chat, floats, health),
+│   │                     # services/ (chat_service, floats_service, health_service)
 │   ├── models/           # Pydantic cross-module types
 │   ├── intent_resolution/# Canonical resolver + llm_compiler.py (single LLM path)
 │   ├── intent_parser/    # Legacy individual parsers (Mock, Regex, Ollama)
@@ -123,8 +125,7 @@ floatchat/
 │   ├── visualization_engine/ # Plotly renderers
 │   ├── scientific_explanation/ # Scientific narration pipeline
 │   ├── variable_registry/# Canonical variable metadata
-│   ├── query_engine/     # Orchestrator
-│   └── api/              # FastAPI app
+│   └── query_engine/     # Orchestrator
 ├── scripts/              # Maintenance & ETL utilities
 └── tests/
     └── fixtures/lake_parquet/  # Small committed sample lake used by tests
