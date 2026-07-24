@@ -9,6 +9,19 @@ from floatchat.metadata_service.base import AbstractMetadataService
 from floatchat.netcdf_reader.base import AbstractNetCDFReader
 from floatchat.visualization_engine.base import AbstractVisualizationEngine
 
+@pytest.fixture(autouse=True)
+def _restore_deployment_mode():
+    """Restore ``settings.deployment_mode`` after each test in this module.
+
+    These tests mutate the global settings singleton directly. Without this
+    guard the mutation would leak into other tests when the suite runs with
+    a shared process (test-isolation fix, Cleanup M1).
+    """
+    previous = settings.deployment_mode
+    yield
+    settings.deployment_mode = previous
+
+
 @pytest.fixture
 def mock_qe():
     meta = MagicMock(spec=AbstractMetadataService)

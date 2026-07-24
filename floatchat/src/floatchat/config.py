@@ -11,8 +11,13 @@ class Settings(BaseSettings):
     ``FLOATCHAT_``. For example: ``FLOATCHAT_GDAC_BASE_URL=...``.
     """
 
+    # Settings may be provided via the environment or an optional .env file.
+    # A relative .env path resolves against the current working directory, so
+    # run the app from the repo or backend root (or use absolute env values).
+    # .env files are developer-local and must stay git-ignored.
     model_config = ConfigDict(
         env_prefix="FLOATCHAT_",
+        env_file=".env",
         case_sensitive=False,
     )
 
@@ -79,10 +84,15 @@ class Settings(BaseSettings):
 
     # Data Lake (Phase 2 — full India-region data lake)
     # Root directory for the complete Phase 2 data lake.
-    # On Windows, set to something like: E:\\floatchat_data_lake\\
-    # Subdirectories created: raw/{core,bgc}/, parquet/{float_registry,profile_index,levels,region_month_stats}/
-    data_lake_dir: str = "E:\\floatchat_data_lake\\"
-    # If True, use the Phase 2 data lake for queries (overrides data_lake_root Phase 1 path)
+    # There is deliberately NO machine-specific default: set
+    # FLOATCHAT_DATA_LAKE_DIR (via environment or .env) to the lake location
+    # on your machine, e.g. E:\floatchat_data_lake\ on Windows or
+    # /data/floatchat_lake on Linux. Expected subdirectories:
+    #   raw/{core,bgc}/, parquet/{float_registry,profile_index,levels,region_month_stats}/
+    data_lake_dir: str = ""
+    # If True, use the Phase 2 data lake for queries (overrides data_lake_root
+    # Phase 1 path). Only takes effect when data_lake_dir is actually set and
+    # populated; otherwise the Phase 1 path under data_lake_root is used.
     data_lake_phase2_enabled: bool = True
     # Number of parallel download workers
     data_lake_download_workers: int = 4

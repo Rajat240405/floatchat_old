@@ -2,13 +2,17 @@
 .cache/
 .pytest_cache/
 __pycache__/
+*.egg-info/
 
 .env
 .env.*
+# ...but keep the documented template checkable.
+!.env.example
 
 **/node_modules/
 **/.next/
 **/out/
+*.tsbuildinfo
 
 dist/
 build/
@@ -18,8 +22,16 @@ build/
 
 *.log
 
-# Data lake runtime caches (Nominatim geocoding results)
-floatchat/.data_lake/.gazetteer_cache/
+# Local data lakes and their runtime caches (Nominatim geocoding results,
+# stream-verification index downloads). Lakes are machine-local — configure
+# via FLOATCHAT_DATA_LAKE_DIR / FLOATCHAT_DATA_LAKE_ROOT (see README).
+# The small committed test fixture lake lives at floatchat/tests/fixtures/
+# and is intentionally NOT matched by this rule.
+**/.data_lake/
+**/.cache_stream_verify/
+
+# Output of floatchat/scripts/package.py
+floatchat-v*.zip
 
 # OS generated files
 .DS_Store

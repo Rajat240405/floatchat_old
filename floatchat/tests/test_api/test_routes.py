@@ -324,14 +324,38 @@ class TestChatEndpoint:
         data2 = response2.json()
         assert data2["intent"] == "profile_plot"
 
-    def test_general_query_uses_context_hint(self, monkeypatch) -> None:
-        """GENERAL_QUERY / KNOWLEDGE_QUERY augments the LLM prompt with conversation context."""
-        from floatchat.llm_service.classifier import QueryClassifier
+    def test_scientific_followup_overrides_classifier_result(self, monkeypatch) -> None:
+        """Migrated from the obsolete ``test_general_query_uses_context_hint``.
 
+        WHY THE OLD TEST WAS REMOVED (behavior change, not a regression):
+        The old test monkeypatched the classifier to return ``GENERAL_QUERY``
+        on the second turn and asserted that the legacy
+        ``_handle_general_query_legacy`` path called the LLM with a
+        conversation-context hint. That no longer reflects the current
+        architecture, for two reasons:
+
+        1. The production classifier never emits ``GENERAL_QUERY`` — it is a
+           legacy alias kept only for backward compatibility; the LLM
+           fallback inside the classifier maps it to ``KNOWLEDGE_QUERY``
+           (see ``floatchat.llm_service.classifier`` and the routing comment
+           in ``routes.chat``).
+        2. Even if a classifier *did* produce ``GENERAL_QUERY`` for a deictic
+           follow-up such as "Explain this graph" while a scientific
+           conversation is active, ``_is_active_scientific_followup`` forces
+           ``DATA_QUERY`` so the follow-up stays on the data pipeline — it is
+           never answered by a direct LLM call.
+
+        This test therefore asserts the CURRENT behavior for the identical
+        conversation: turn 2 is kept on the data path, fails canonical
+        resolution gracefully (intent="unknown"), replies with a
+        context-aware suggestion message that still references the turn-1
+        scientific context, and never calls the LLM.
+        """
         session_id = "test-session-789"
         llm_calls: list[str] = []
 
-        # Capture LLM prompts
+        # Capture LLM prompts — the current architecture must NOT call the
+        # LLM at any point during this conversation.
         from floatchat.api.dependencies import get_llm_service
 
         def _capture_llm():
@@ -352,12 +376,12 @@ class TestChatEndpoint:
             is_loaded=MagicMock(return_value=True),
             search=MagicMock(return_value=[]),
         )
-        # Need knowledge base override too
         from floatchat.llm_service.knowledge_base import KnowledgeBase
+
         app.dependency_overrides[get_knowledge_base] = lambda: KnowledgeBase()
 
-        # The route calls QueryClassifier.classify(classifier, msg) which
-        # invokes the *real* class method.  We must monkeypatch at the class.
+        # Turn 1 is a real data query; turn 2 forces the (legacy)
+        # GENERAL_QUERY classification to prove the routing override wins.
         _classify_calls: list[str] = []
 
         def _fake_classify(self, message: str) -> str:
@@ -367,17 +391,30 @@ class TestChatEndpoint:
         monkeypatch.setattr(QueryClassifier, "classify", _fake_classify)
 
         test_client = TestClient(app)
-        test_client.post(
+        response1 = test_client.post(
             "/api/v1/chat",
             json={"message": "show oxygen in arabian sea", "session_id": session_id},
         )
-        test_client.post(
+        assert response1.status_code == 200
+        assert response1.json()["intent"] == "profile_plot"
+
+        response2 = test_client.post(
             "/api/v1/chat",
             json={"message": "Explain this graph", "session_id": session_id},
         )
+        assert response2.status_code == 200
+        # Current behavior: definition word ("explain") + deictic reference
+        # ("this") over an active profile context takes precedence over the
+        # (forced) GENERAL_QUERY classification, so the message stays on the
+        # DATA_QUERY path instead of the legacy direct-LLM path. Canonical
+        # intent resolution cannot bind "Explain this graph" to a query, so
+        # the route replies with the graceful "unknown" response whose
+        # suggestion message is built from the turn-1 scientific context.
+        data2 = response2.json()
+        assert data2["intent"] == "unknown"
+        assert "You were previously looking at" in data2["message"]
+        assert "DOXY" in data2["message"]
+        assert "Arabian Sea" in data2["message"]
 
-        assert len(llm_calls) >= 1
-        last_prompt = llm_calls[-1]
-        assert "Conversation Context" in last_prompt
-        assert "arabian sea" in last_prompt.lower()
-        assert "DOXY" in last_prompt
+        # The legacy direct-LLM ("GENERAL_QUERY") path must NOT have fired.
+        assert llm_calls == []

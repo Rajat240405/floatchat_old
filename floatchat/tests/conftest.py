@@ -2,13 +2,52 @@
 
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 import netCDF4
 import numpy as np
 import pytest
 
+# ── Cleanup M1: deterministic test environment ───────────────────────────── #
+# The suite must behave identically regardless of the developer machine's
+# environment variables and regardless of the directory pytest is launched
+# from. Before M1, the default data-lake root (".data_lake/parquet") resolved
+# against the *current working directory*, so API/health tests silently
+# passed only when launched from the floatchat/ backend directory (which
+# happened to contain a committed sample lake), and the default Phase-2 lake
+# directory depended on one developer's Windows path ("E:\\...").
+#
+# Here we pin every environment-derived setting to this repository's
+# committed fixture lake, using an absolute path anchored to THIS file.
+from floatchat.config import settings as _test_settings
+
+FIXTURE_LAKE_ROOT = Path(__file__).resolve().parent / "fixtures" / "lake_parquet"
+
+if not FIXTURE_LAKE_ROOT.exists():
+    raise RuntimeError(
+        f"Committed test fixture lake not found at {FIXTURE_LAKE_ROOT}. "
+        "The suite relies on this small sample lake; do not delete it."
+    )
+
+# Pin BEFORE anything builds the runtime graph (app/dependencies read these
+# values lazily at first request).
+_test_settings.data_lake_root = str(FIXTURE_LAKE_ROOT)
+# Phase 2 (full lake) must never be consulted during tests — its location is
+# machine-specific. Forcing it off makes the suite hermetic.
+_test_settings.data_lake_phase2_enabled = False
+_test_settings.data_lake_dir = ""
+
 from floatchat.models import MetadataRecord, ParsedIntent
 from floatchat.repository_service.dataset_wrapper import NetCDFDataset
+
+
+@pytest.fixture(scope="session")
+def fixture_lake_root() -> Path:
+    """Reusable fixture: absolute path to the committed sample Parquet lake.
+
+    Use this instead of relying on the cwd-relative runtime default.
+    """
+    return FIXTURE_LAKE_ROOT
 
 
 @pytest.fixture

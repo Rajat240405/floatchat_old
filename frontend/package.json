@@ -9,12 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@deck.gl/core": "^9.3.6",
-    "@deck.gl/layers": "^9.3.6",
-    "@deck.gl/react": "^9.3.6",
-    "@deck.gl/widgets": "^9.3.6",
     "axios": "^1.7.0",
-    "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "framer-motion": "^11.18.0",
     "lucide-react": "^0.460.0",

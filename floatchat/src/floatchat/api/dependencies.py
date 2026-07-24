@@ -77,7 +77,9 @@ def get_data_lake() -> AbstractDataLake:
     """Return the process-local DuckDB/Parquet service singleton."""
     global _data_lake
     if _data_lake is None:
-        if settings.data_lake_phase2_enabled:
+        # Phase 2 lake is used only when it was explicitly configured
+        # (data_lake_dir non-empty) AND the levels table is populated on disk.
+        if settings.data_lake_phase2_enabled and settings.data_lake_dir:
             phase2_root = Path(settings.data_lake_dir)
             levels_root = phase2_root / "parquet" / "levels"
             if levels_root.exists() and any(levels_root.rglob("*.parquet")):
