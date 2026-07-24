@@ -28,6 +28,7 @@ from floatchat.conversation.base import AbstractConversationManager
 from floatchat.api.schemas import ChatRequest
 from floatchat.exceptions import FloatChatError, IntentParseError
 from floatchat.intent_parser.base import AbstractIntentParser
+from floatchat.intent_resolution.resolver import IntentResolver
 from floatchat.llm_service.base import AbstractLLMService
 from floatchat.llm_service.classifier import QueryClassifier
 from floatchat.llm_service.knowledge_base import KnowledgeBase
@@ -383,7 +384,7 @@ def handle_chat(
     classifier: QueryClassifier,
     llm_service: AbstractLLMService,
     intent_parser: AbstractIntentParser,
-    intent_resolver,
+    intent_resolver: IntentResolver,
     query_engine: QueryEngine,
     conversation_manager: AbstractConversationManager,
     knowledge_base: KnowledgeBase,

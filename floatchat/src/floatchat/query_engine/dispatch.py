@@ -18,7 +18,16 @@ executor.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Callable, get_args
+
+if TYPE_CHECKING:
+    from floatchat.data_lake.base import AbstractDataLake
+    from floatchat.metadata_service.base import AbstractMetadataService
+    from floatchat.netcdf_reader.base import AbstractNetCDFReader
+    from floatchat.repository_service.base import AbstractRepositoryService
+    from floatchat.retrieval_planner.planner import RetrievalPlanner
+    from floatchat.scientific_explanation.engine import ScientificExplanationEngine
+    from floatchat.visualization_engine.base import AbstractVisualizationEngine
 
 from floatchat.models import ChatResponse, ParsedIntent
 from floatchat.query_engine.executors import metadata as _metadata_executors
@@ -26,20 +35,23 @@ from floatchat.query_engine.executors import profile as _profile_executor
 from floatchat.query_engine.executors import spatial, trajectory
 
 
-_DATA_INTENTS = frozenset({
-    "region_search",
-    "profile_plot",
-    "time_series",
-    "trajectory",
-    "hovmoller",
-    "ts_diagram",
-    "comparison",
-    "comparison_plot",
-    "nearest_float",
-    "radius_search",
-    "count_aggregate",
-    "metadata_lookup",
+# Milestone 5 (contract tightening): the intent vocabulary is single-sourced
+# from the authoritative contract — the Literal on ``ParsedIntent.intent`` —
+# instead of duplicating the intent names here. The derived set is identical
+# to the hand-maintained one it replaces (verified by test_dispatch.py).
+_INTENT_VOCABULARY = frozenset(get_args(ParsedIntent.model_fields["intent"].annotation))
+
+# Intents handled before/outside the data pipeline (chat routing, guard rails).
+_NON_DATA_INTENTS = frozenset({
+    "general_chat",
+    "unknown",
+    "small_talk",
+    "out_of_domain",
+    "knowledge_base",
 })
+
+# All data intents that MUST go through the local data lake
+_DATA_INTENTS = _INTENT_VOCABULARY - _NON_DATA_INTENTS
 
 
 Executor = Callable[["ExecutionDeps", ParsedIntent, float], ChatResponse]
@@ -52,15 +64,19 @@ class ExecutionDeps:
     ``lake`` is the already-resolved (dependency-injected or lazily built and
     cached by the engine) data lake instance; it may be ``None`` when no lake
     could be initialised — executors preserve the monolith's ``None`` guards.
+
+    Field types are declared against the abstract service contracts
+    (Milestone 5): executors depend on these interfaces, never on concrete
+    implementations.
     """
 
-    lake: Any
-    metadata: Any
-    repository: Any
-    reader: Any
-    viz: Any
-    explanation_engine: Any
-    planner: Any
+    lake: AbstractDataLake | None
+    metadata: AbstractMetadataService
+    repository: AbstractRepositoryService
+    reader: AbstractNetCDFReader
+    viz: AbstractVisualizationEngine
+    explanation_engine: ScientificExplanationEngine
+    planner: RetrievalPlanner
 
 
 # Explicit intent → executor routes (the monolith's if-chain, unchanged).

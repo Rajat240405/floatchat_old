@@ -1,5 +1,9 @@
 # Argo Scientific Audit
 
+> **Status: historical reference (pre-cleanup).** Retained as scientific/domain
+> background; it does not describe the current system. Authoritative
+> architecture: [`/ARCHITECTURE.md`](../../../ARCHITECTURE.md).
+
 **Project:** FloatChat  
 **Date:** 2026-07-09  
 **Scope:** Argo data model, GDAC indexes, NetCDF formats, variable semantics, QC, data modes, regional definitions, architectural assumptions.

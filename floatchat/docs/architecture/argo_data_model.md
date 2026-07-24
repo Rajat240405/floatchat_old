@@ -1,5 +1,9 @@
 # Argo Data Model
 
+> **Status: historical reference (pre-cleanup).** Retained as domain background
+> on the Argo data model. For the current system architecture see
+> [`/ARCHITECTURE.md`](../../../ARCHITECTURE.md).
+
 **Audience:** FloatChat engineers maintaining metadata, repository, reader, viz.  
 **Companion docs:** `../scientific/argo_scientific_audit.md` (audit), `../investigations/temp_query_root_cause.md` (TEMP failure).
 

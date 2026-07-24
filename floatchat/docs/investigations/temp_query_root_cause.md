@@ -1,5 +1,8 @@
 # Investigation: TEMP Query Returns No Data – Root Cause Analysis
 
+> **Status: historical investigation (closed).** Describes a past incident, not
+> current architecture (see [`/ARCHITECTURE.md`](../../../ARCHITECTURE.md)).
+
 **Status:** Closed – Root cause proven  
 **Date:** 2026-07-09  
 **Component:** MetadataService → RepositoryService → NetCDFReader  

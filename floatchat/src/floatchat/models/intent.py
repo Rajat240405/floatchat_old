@@ -76,7 +76,11 @@ class ParsedIntent(BaseModel):
         ge=1,
         description="Specific profile/cycle number to retrieve.",
     )
-    cycle_number: int | None = Field(default=None, ge=1)
+    # Milestone 5: the former `cycle_number` field was removed. It was a stale
+    # alias of `profile_number` — accepted (e.g. from LLM parser output) but
+    # never read by any consumer. Unknown keys are ignored by pydantic's
+    # default extra policy, so parser payloads mentioning it remain valid.
+
     # P3 #2 / P2: Operational + resolved-temporal attributes promoted to proper
     # fields so they survive model_dump() + ParsedIntent reconstruction (the old
     # underscore-prefixed dynamic attrs were silently dropped by the `not

@@ -3,8 +3,15 @@
 Locks the intent→executor routing semantics that were previously the
 if-chain inside the engine monolith, and the data-intent vocabulary that
 QueryEngine.execute() validates against.
+
+Milestone 5 extends this with the vocabulary single-sourcing contract:
+``_DATA_INTENTS`` is derived from the ``ParsedIntent.intent`` Literal, and
+the two declared sets must partition that vocabulary exactly.
 """
 
+from typing import get_args
+
+from floatchat.models import ParsedIntent
 from floatchat.query_engine import dispatch
 from floatchat.query_engine.executors import metadata as metadata_executors
 from floatchat.query_engine.executors import profile, spatial, trajectory
@@ -26,6 +33,17 @@ class TestDataIntentVocabulary:
             "count_aggregate",
             "metadata_lookup",
         })
+
+
+class TestVocabularySingleSourcing:
+    def test_data_and_non_data_partition_the_literal(self) -> None:
+        vocab = frozenset(get_args(ParsedIntent.model_fields["intent"].annotation))
+        assert dispatch._DATA_INTENTS | dispatch._NON_DATA_INTENTS == vocab
+        assert not (dispatch._DATA_INTENTS & dispatch._NON_DATA_INTENTS)
+
+    def test_data_intents_derived_not_duplicated(self) -> None:
+        vocab = frozenset(get_args(ParsedIntent.model_fields["intent"].annotation))
+        assert dispatch._DATA_INTENTS == vocab - dispatch._NON_DATA_INTENTS
 
 
 class TestRouteTable:

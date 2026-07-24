@@ -1,5 +1,8 @@
 # FloatChat
 
+> **Architecture:** the authoritative, final architecture contract lives in
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (finalized by cleanup Milestones M1–M5).
+
 AI-powered conversational backend for querying live Argo BGC (Biogeochemical) oceanographic data.
 
 ## What It Does

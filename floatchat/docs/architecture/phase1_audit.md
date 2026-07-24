@@ -1,6 +1,10 @@
 # Phase 1 — Architecture Audit & Baseline
 
-**Status:** Complete. No code changes made. This document is the audit only.
+> **Status: historical reference (pre-cleanup audit of a codebase state that no
+> longer exists).** Superseded for architecture purposes by
+> [`/ARCHITECTURE.md`](../../../ARCHITECTURE.md); retained for provenance.
+
+**Audit status:** Complete. No code changes made. This document is the audit only.
 
 ---
 

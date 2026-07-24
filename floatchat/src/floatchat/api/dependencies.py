@@ -8,7 +8,10 @@ by default. OllamaQueryNormalizer is DEPRECATED for hot-path use.
 """
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
+
+if TYPE_CHECKING:
+    from floatchat.llm_service.knowledge_base import KnowledgeBase
 
 from fastapi import Depends
 
@@ -62,7 +65,7 @@ _scientific_prompt_builder: PromptBuilder | None = None
 _narrator_output_parser: NarratorOutputParser | None = None
 _verification_guard: VerificationGuard | None = None
 _scientific_explanation_engine: ScientificExplanationEngine | None = None
-_knowledge_base: object | None = None  # KnowledgeBase singleton (Phase 6)
+_knowledge_base: "KnowledgeBase | None" = None  # KnowledgeBase singleton (Phase 6)
 
 
 def get_metadata_service() -> AbstractMetadataService:

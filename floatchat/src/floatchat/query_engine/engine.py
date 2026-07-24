@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from floatchat.config import settings
 from floatchat.metadata_service.base import AbstractMetadataService
@@ -137,7 +137,7 @@ class QueryEngine:
         )
         return dispatch.route(intent.intent)(deps, intent, pipeline_t0)
 
-    def _get_data_lake(self) -> Any:
+    def _get_data_lake(self) -> AbstractDataLake | None:
         """Lazily instantiate the data lake on first use."""
         if self._data_lake is None:
             try:
