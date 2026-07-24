@@ -6,10 +6,9 @@ Modern AI conversational interface for querying live Argo BGC oceanographic data
 
 - **Next.js 15** — React framework
 - **TypeScript** — Type safety
-- **Tailwind CSS** — Utility-first styling
-- **shadcn/ui** — Component primitives (clsx, tailwind-merge, cva)
+- **Tailwind CSS** — Utility-first styling (with clsx + tailwind-merge)
 - **Axios** — HTTP client
-- **React Leaflet** — Interactive map
+- **MapLibre GL (react-map-gl)** — Interactive map
 - **Plotly.js** — Scientific visualization
 - **Framer Motion** — Animations
 - **Lucide React** — Icons
@@ -35,10 +34,15 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Backend Connection
 
-The frontend connects to the backend via Next.js rewrites (proxy):
+The frontend calls the backend **directly** (no Next.js proxy/rewrites are
+configured in `next.config.js`). The base URL is taken from
+`NEXT_PUBLIC_BACKEND_URL`, falling back to `http://127.0.0.1:8000`:
 
-- `/api/chat` → `http://127.0.0.1:8000/api/v1/chat`
-- `/api/health` → `http://127.0.0.1:8000/health`
+- `POST {BACKEND_URL}/api/v1/chat`
+- `GET {BACKEND_URL}/health`
+
+The backend enables CORS for `http://localhost:3000` / `http://127.0.0.1:3000`,
+so the dev server can call it cross-origin.
 
 Ensure the FloatChat backend is running before using the frontend:
 
@@ -66,7 +70,7 @@ frontend/
 │   │   ├── ChatMessage.tsx # Individual message bubble
 │   │   └── TypingIndicator.tsx # Loading dots
 │   ├── Map/
-│   │   └── MapPanel.tsx  # Leaflet map
+│   │   └── MapPanel.tsx  # MapLibre map
 │   ├── Results/
 │   │   ├── ResultsPanel.tsx # Results container
 │   │   ├── SummaryCards.tsx # Data summary cards
@@ -81,13 +85,13 @@ frontend/
 │   └── index.ts          # TypeScript types
 ├── lib/
 │   └── utils.ts          # Utilities (cn, id, time)
-└── next.config.js        # Next.js config with proxy rewrites
+└── next.config.js        # Next.js config (reactStrictMode only — no rewrites)
 ```
 
 ## Features
 
 - **Dark mode by default** — Ocean-inspired color palette
-- **Interactive map** — Leaflet with OpenStreetMap (dark styled)
+- **Interactive map** — MapLibre GL with OpenStreetMap tiles (dark styled)
 - **Real-time chat** — Connected to live backend
 - **Plotly rendering** — Scientific visualizations from backend JSON
 - **Summary cards** — Profile count, measurements, date range, intent
@@ -99,13 +103,13 @@ frontend/
 
 ## Environment Variables
 
-None required for local development. The backend URL is configured via Next.js rewrites in `next.config.js`.
+| Variable | Default | Description |
+|---|---|---|
+| `NEXT_PUBLIC_BACKEND_URL` | `http://127.0.0.1:8000` | Base URL of the FloatChat backend (used directly; no Next.js proxy) |
 
-To change the backend URL, edit `next.config.js`:
-
-```js
-destination: 'http://your-backend:8000/api/v1/chat',
-```
+Optional for local development — only set it when the backend is not on the
+default address, e.g. `NEXT_PUBLIC_BACKEND_URL=http://your-backend:8000`.
+Because this is a `NEXT_PUBLIC_` variable it is inlined at build time.
 
 ## Build for Production
 
@@ -124,14 +128,17 @@ Ensure the backend is running on port 8000:
 curl http://127.0.0.1:8000/health
 ```
 
-Should return `{"status":"ok","metadata_loaded":true}`.
+Should return a JSON payload whose `status` is `"ok"` (or `"degraded"` when no
+data lake is configured yet), e.g.
+`{"status":"ok","duckdb_ready":true,...}`.
 
 ### Map not loading
 
-Check that Leaflet CSS is imported. The `globals.css` includes:
+Check that the MapLibre stylesheet is imported. `components/Map/MapPanel.tsx`
+includes:
 
-```css
-@import "leaflet/dist/leaflet.css";
+```ts
+import "maplibre-gl/dist/maplibre-gl.css";
 ```
 
 ### Plotly not rendering

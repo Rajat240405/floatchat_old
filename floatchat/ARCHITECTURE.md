@@ -1,5 +1,26 @@
 # FloatChat Architecture
 
+> **Accuracy note (2026-07-24, Cleanup M1):** This document describes the
+> original **Phase 1** design and is kept as that milestone's design record.
+> The current runtime architecture differs in the following respects (see
+> `README.md` for the up-to-date overview):
+>
+> - **Data source**: chat traffic reads a local DuckDB/Parquet **data lake**
+>   (`data_lake/`, built offline from the GDAC). Principles 5 ("No Local
+>   NetCDF Persistence") and 6 ("No Database") below no longer hold for the
+>   default deployment: the lake is local, and live GDAC HTTP access is
+>   disabled by default (`FLOATCHAT_ALLOW_REMOTE_GDAC_FALLBACK`, ETL-only).
+> - **Intent chain**: entry is `QueryClassifier` (traffic cop) →
+>   `intent_resolution/` `IntentResolver` (regex with optional structured LLM
+>   compiler fallback). The `intent_parser/` Mock/Regex/Ollama classes here are
+>   legacy, exercised mainly by their own tests.
+> - **Additional modules** not covered here: `retrieval_planner/`,
+>   `scientific_explanation/` (narration pipeline), `conversation/`,
+>   `llm_service/` (classifier, knowledge base), `entity_extractor/`,
+>   `query_normalizer/`, `data_lake/`, `variable_registry/`, and `scripts/`.
+>
+> Everything below this note is the original Phase 1 text, retained verbatim.
+
 ## Overview
 
 FloatChat is a deterministic Python backend that converts natural-language queries about Argo BGC oceanographic data into structured visualizations. The LLM is strictly isolated behind an interface and is only responsible for NL → JSON translation. All data retrieval, processing, and rendering is deterministic.
