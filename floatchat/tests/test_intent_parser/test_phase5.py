@@ -366,34 +366,34 @@ class TestManufacturerResolution:
     """Test the profiler type to manufacturer mapping."""
 
     def test_apex_manufacturer(self) -> None:
-        from floatchat.query_engine.engine import _resolve_manufacturer
+        from floatchat.query_engine.helpers import _resolve_manufacturer
         assert _resolve_manufacturer("831") == "Teledyne Webb"
         assert _resolve_manufacturer("832") == "Teledyne Webb"
 
     def test_provor_manufacturer(self) -> None:
-        from floatchat.query_engine.engine import _resolve_manufacturer
+        from floatchat.query_engine.helpers import _resolve_manufacturer
         assert _resolve_manufacturer("836") == "Teledyne CARAIBE"
         assert _resolve_manufacturer("837") == "Teledyne CARAIBE"
 
     def test_navis_manufacturer(self) -> None:
-        from floatchat.query_engine.engine import _resolve_manufacturer
+        from floatchat.query_engine.helpers import _resolve_manufacturer
         assert _resolve_manufacturer("845") == "Teledyne Webb"
 
     def test_solo_manufacturer(self) -> None:
-        from floatchat.query_engine.engine import _resolve_manufacturer
+        from floatchat.query_engine.helpers import _resolve_manufacturer
         assert _resolve_manufacturer("851") == "Scripps/Floats Inc."
 
     def test_arvor_manufacturer(self) -> None:
-        from floatchat.query_engine.engine import _resolve_manufacturer
+        from floatchat.query_engine.helpers import _resolve_manufacturer
         assert _resolve_manufacturer("861") == "Teledyne CARAIBE"
         assert _resolve_manufacturer("862") == "Teledyne CARAIBE"
 
     def test_ninja_manufacturer(self) -> None:
-        from floatchat.query_engine.engine import _resolve_manufacturer
+        from floatchat.query_engine.helpers import _resolve_manufacturer
         assert _resolve_manufacturer("846") == "Tsurumi Seiki"
 
     def test_unknown_profiler_returns_none(self) -> None:
-        from floatchat.query_engine.engine import _resolve_manufacturer
+        from floatchat.query_engine.helpers import _resolve_manufacturer
         assert _resolve_manufacturer("999") is None
         assert _resolve_manufacturer("") is None
         assert _resolve_manufacturer(None) is None

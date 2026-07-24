@@ -16,7 +16,7 @@ import pytest
 from floatchat.config import settings
 from floatchat.intent_parser.regex import RegexIntentParser
 from floatchat.models import ParsedIntent
-from floatchat.query_engine.engine import _build_alive_window
+from floatchat.query_engine.helpers import _build_alive_window
 
 
 # --------------------------------------------------------------------------- #

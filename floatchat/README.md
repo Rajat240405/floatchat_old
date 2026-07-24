@@ -125,7 +125,7 @@ floatchat/
 │   ├── visualization_engine/ # Plotly renderers
 │   ├── scientific_explanation/ # Scientific narration pipeline
 │   ├── variable_registry/# Canonical variable metadata
-│   └── query_engine/     # Orchestrator
+│   └── query_engine/     # Orchestrator (engine) + dispatch, executors/, helpers, response_builder
 ├── scripts/              # Maintenance & ETL utilities
 └── tests/
     └── fixtures/lake_parquet/  # Small committed sample lake used by tests

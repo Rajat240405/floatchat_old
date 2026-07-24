@@ -138,12 +138,18 @@ class TestQueryEngine:
         mock_lake._lake_root = MagicMock()
         engine._data_lake = mock_lake
 
-        original_build_summary = engine._build_lake_summary
-        engine._build_lake_summary = MagicMock(wraps=original_build_summary)
+        # M4: _build_lake_summary now lives in query_engine.response_builder;
+        # the data-query executor resolves it as a module attribute at call
+        # time, so wrap + patch there (behavioural contract unchanged).
+        from floatchat.query_engine import response_builder
 
-        engine.execute(ParsedIntent(intent="profile_plot", variables=["DOXY"]))
+        original_build_summary = response_builder._build_lake_summary
+        with patch.object(
+            response_builder, "_build_lake_summary", wraps=original_build_summary
+        ) as mock_build_summary:
+            engine.execute(ParsedIntent(intent="profile_plot", variables=["DOXY"]))
 
-        engine._build_lake_summary.assert_called_once()
+        mock_build_summary.assert_called_once()
 
     def test_metadata_lookup_falls_back_to_gdac_when_allowed(self) -> None:
         """Priority 1A: GDAC metadata fallback only when FLOATCHAT_ALLOW_REMOTE_GDAC_FALLBACK=True."""
