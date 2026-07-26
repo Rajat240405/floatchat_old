@@ -21,6 +21,8 @@ import pandas as pd
 from floatchat.config import settings
 from floatchat.exceptions import FloatChatError
 from floatchat.models import ChatResponse, MapData, ParsedIntent
+from floatchat.ontology.regions import INDIA_QUERY_REGIONS
+from floatchat.ontology.variables import LEVELS_VARIABLE_ORDER, levels_storage_names
 from floatchat.query_engine import response_builder
 from floatchat.query_engine.executors.legacy import execute_via_legacy_gdac
 from floatchat.query_engine.helpers import _figure_metrics
@@ -102,9 +104,11 @@ def execute_data_query_via_lake(
         )
 
     criteria = LakeQueryCriteria(
+        # Ontology 2.0 (Phase 1): the lake-supported region set lives in the
+        # domain ontology (INDIA_QUERY_REGIONS); membership is unchanged.
         region=(
             intent.region
-            if intent.region in ("arabian_sea", "bay_of_bengal")
+            if intent.region in INDIA_QUERY_REGIONS
             else None
         ),
         lat_min=lat_min,
@@ -189,34 +193,17 @@ def execute_data_query_via_lake(
     df = lake_result.df.copy()
     df["profile_date"] = pd.to_datetime(df["date"], errors="coerce")
 
-    # Map lowercase lake columns to standard uppercase Argo variable names for viz/explanation
-    col_aliases = {
-        "pressure": "PRES",
-        "temp": "TEMP",
-        "temp_qc": "TEMP_QC",
-        "temp_adjusted": "TEMP_ADJUSTED",
-        "psal": "PSAL",
-        "psal_qc": "PSAL_QC",
-        "psal_adjusted": "PSAL_ADJUSTED",
-        "doxy": "DOXY",
-        "doxy_qc": "DOXY_QC",
-        "doxy_adjusted": "DOXY_ADJUSTED",
-        "chla": "CHLA",
-        "chla_qc": "CHLA_QC",
-        "chla_adjusted": "CHLA_ADJUSTED",
-        "bbp700": "BBP700",
-        "bbp700_qc": "BBP700_QC",
-        "bbp700_adjusted": "BBP700_ADJUSTED",
-        "nitrate": "NITRATE",
-        "nitrate_qc": "NITRATE_QC",
-        "nitrate_adjusted": "NITRATE_ADJUSTED",
-        "ph_in_situ_total": "PH_IN_SITU_TOTAL",
-        "ph_in_situ_total_qc": "PH_IN_SITU_TOTAL_QC",
-        "ph_in_situ_total_adjusted": "PH_IN_SITU_TOTAL_ADJUSTED",
-        "downwelling_par": "DOWNWELLING_PAR",
-        "downwelling_par_qc": "DOWNWELLING_PAR_QC",
-        "downwelling_par_adjusted": "DOWNWELLING_PAR_ADJUSTED",
-    }
+    # Map lowercase lake columns to standard uppercase Argo variable names for viz/explanation.
+    # Ontology 2.0 (Phase 1): the variable storage names derive from the
+    # domain ontology (LEVELS_VARIABLE_ORDER + lowercase/suffix rule). Entries
+    # and insertion order are identical to the legacy literal map (insertion
+    # order is observable downstream through DataFrame column order).
+    col_aliases = {"pressure": "PRES"}
+    for _var_name in LEVELS_VARIABLE_ORDER:
+        _raw, _qc, _adjusted = levels_storage_names(_var_name)
+        col_aliases[_raw] = _var_name
+        col_aliases[_qc] = f"{_var_name}_QC"
+        col_aliases[_adjusted] = f"{_var_name}_ADJUSTED"
     for low, up in col_aliases.items():
         if low in df.columns and up not in df.columns:
             df[up] = df[low]

@@ -23,6 +23,12 @@ from floatchat.api.schemas import (
     FloatTrajectoryAPIResponse,
 )
 from floatchat.config import settings
+from floatchat.ontology.variables import (
+    CATALOGUE_VARIABLE_ORDER,
+    LEVELS_VARIABLE_ORDER,
+    VARIABLES,
+    levels_storage_names,
+)
 from floatchat.variable_registry.registry import VariableRegistry
 
 logger = logging.getLogger(__name__)
@@ -689,19 +695,16 @@ def build_latest_profile_response(float_id: str) -> FloatProfileAPIResponse:
 # No LLM. No chat.
 # ================================================
 
+# Ontology 2.0 (Phase 1): catalogue titles and ordering live in the domain
+# ontology (VariableDefinition.card_title / CATALOGUE_VARIABLE_ORDER);
+# contents are unchanged.
 _VAR_TITLES = {
-    "TEMP": "Temperature",
-    "PSAL": "Salinity",
-    "DOXY": "Oxygen",
-    "CHLA": "Chlorophyll",
-    "NITRATE": "Nitrate (µmol kg⁻¹)",
-    "BBP700": "Particle Backscattering 700 nm (m⁻¹)",
-    "PH_IN_SITU_TOTAL": "In-situ pH (total scale)",
-    "DOWNWELLING_PAR": "Downwelling PAR (µmol photons m⁻² s⁻¹)",
-    "PRES": "Pressure",
+    name: definition.card_title
+    for name, definition in VARIABLES.items()
+    if definition.card_title is not None
 }
 
-_CORE_PLOT_VARS = ("TEMP", "PSAL", "DOXY", "CHLA", "NITRATE", "BBP700", "PH_IN_SITU_TOTAL", "DOWNWELLING_PAR")
+_CORE_PLOT_VARS = CATALOGUE_VARIABLE_ORDER
 
 
 def _normalize_float_id(float_id: str) -> str:
@@ -719,15 +722,11 @@ def _count_profiles_with_variable(lake, float_id: str, var: str) -> int:
     import pandas as pd
 
     var_u = var.upper()
+    # Ontology 2.0 (Phase 1): lake storage names derive from the ontology
+    # (lowercased canonical + "_adjusted"; contents are unchanged).
     col_map = {
-        "TEMP": ("temp_adjusted", "temp"),
-        "PSAL": ("psal_adjusted", "psal"),
-        "DOXY": ("doxy_adjusted", "doxy"),
-        "CHLA": ("chla_adjusted", "chla"),
-        "BBP700": ("bbp700_adjusted", "bbp700"),
-        "NITRATE": ("nitrate_adjusted", "nitrate"),
-        "PH_IN_SITU_TOTAL": ("ph_in_situ_total_adjusted", "ph_in_situ_total"),
-        "DOWNWELLING_PAR": ("downwelling_par_adjusted", "downwelling_par"),
+        var_name: (levels_storage_names(var_name)[2], levels_storage_names(var_name)[0])
+        for var_name in LEVELS_VARIABLE_ORDER
     }
     # Prefer levels parquet for TEMP/PSAL/DOXY/CHLA
     if var_u in col_map and lake is not None:

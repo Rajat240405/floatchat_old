@@ -11,133 +11,20 @@ import difflib
 import re
 from typing import List, Optional
 
+from floatchat.ontology.variables import (
+    PARSER_VARIABLE_ORDER as _PARSER_VARIABLE_ORDER,
+    TYPO_CORRECTIONS as _ONTOLOGY_TYPO_CORRECTIONS,
+)
 
-_VARIABLE_CANONICAL = [
-    "TEMP",
-    "PSAL",
-    "DOXY",
-    "CHLA",
-    "NITRATE",
-    "BBP700",
-    "PH_IN_SITU_TOTAL",
-    "DOWNWELLING_PAR",
-    "DOWN_IRRADIANCE380",
-    "DOWN_IRRADIANCE412",
-    "DOWN_IRRADIANCE490",
-]
+# Ontology 2.0 (Phase 1): the canonical variable list and the high-confidence
+# typo-correction map live in the domain ontology (verbatim relocation).
+# Ordering is preserved exactly — difflib tie-breaking makes it observable.
+
+_VARIABLE_CANONICAL = list(_PARSER_VARIABLE_ORDER)
 
 # High-confidence typo corrections — these are always applied regardless of
 # similarity score. Covers common misspellings and shorthand forms.
-_TYPO_MAP = {
-    # --- Temperature ---
-    "TEMPARATURE": "TEMP",
-    "TEMPERATURE": "TEMP",
-    "TEMBAATRE": "TEMP",
-    "TEMBARATRE": "TEMP",
-    "TEMBARATURE": "TEMP",
-    "TEMBARATUE": "TEMP",
-    "TEMBARTURE": "TEMP",
-    "TEMERATURE": "TEMP",
-    "TEMPERATUE": "TEMP",
-    "TEMPERTAURE": "TEMP",
-    "TEMPEARTURE": "TEMP",
-    "TEMPRAURE": "TEMP",
-    "TEMPEARUTRE": "TEMP",
-    "TMEPERATURE": "TEMP",
-    "TEMPRATURE": "TEMP",
-    "TEMPARTURE": "TEMP",
-    "WATER TEMP": "TEMP",
-    "SEA TEMP": "TEMP",
-    "SST": "TEMP",
-
-    # --- Salinity ---
-    "SALINTY": "PSAL",
-    "SALINITY": "PSAL",
-    "SALINETY": "PSAL",
-    "SALINATY": "PSAL",
-    "SALT": "PSAL",
-    "SALTN": "PSAL",
-    "SALINIT": "PSAL",
-    "SAILNITY": "PSAL",
-    "SALNITY": "PSAL",
-    "SALINIY": "PSAL",
-    "SEA SALT": "PSAL",
-    "WATER SALINITY": "PSAL",
-
-    # --- Dissolved Oxygen ---
-    "OXIGEN": "DOXY",
-    "OXYGEN": "DOXY",
-    "OXY": "DOXY",
-    "DOX": "DOXY",
-    "DISSOLVED OXYGEN": "DOXY",
-    "DISOLVED OXYGEN": "DOXY",
-    "DISSOLVED O2": "DOXY",
-    "OXYGENE": "DOXY",
-    "OXIGENE": "DOXY",
-    "OXEGEN": "DOXY",
-    "DOXYGEN": "DOXY",
-    "DISSOLVED OXY": "DOXY",
-    "O2": "DOXY",
-
-    # --- Chlorophyll ---
-    "CHLORPHYLL": "CHLA",
-    "CHLOROPHYLL": "CHLA",
-    "CHLOROPHIL": "CHLA",
-    "CHLOROPHYL": "CHLA",
-    "CHLOROPHLL": "CHLA",
-    "CHLOROPHYLLA": "CHLA",
-    "CHLOROPHILL": "CHLA",
-    "CHL": "CHLA",
-    "CHLOR": "CHLA",
-    "CHL A": "CHLA",
-    "CHL-A": "CHLA",
-    "CHLOROPHYLL A": "CHLA",
-    "CHLOROPHYLL-A": "CHLA",
-    "PHYTOPLANKTON": "CHLA",
-    "ALGAE": "CHLA",
-    "GREEN": "CHLA",
-
-    # --- Nitrate ---
-    "NITRAT": "NITRATE",
-    "NITRATE": "NITRATE",
-    "NO3": "NITRATE",
-    "NITRITE": "NITRATE",
-    "NITROGEN": "NITRATE",
-    "NO3-N": "NITRATE",
-    "NITRTE": "NITRATE",
-
-    # --- Backscattering ---
-    "BACKSCATTERING": "BBP700",
-    "BACKSCATTER": "BBP700",
-    "BACK SCATTER": "BBP700",
-    "BBP": "BBP700",
-    "PARTICLE BACKSCATTERING": "BBP700",
-    "PARTICULATE BACKSCATTER": "BBP700",
-    "PARTICLES": "BBP700",
-
-    # --- pH ---
-    "PH": "PH_IN_SITU_TOTAL",
-    "ACIDITY": "PH_IN_SITU_TOTAL",
-    "PH LEVEL": "PH_IN_SITU_TOTAL",
-    "WATER PH": "PH_IN_SITU_TOTAL",
-    "OCEAN PH": "PH_IN_SITU_TOTAL",
-
-    # --- PAR ---
-    "PAR": "DOWNWELLING_PAR",
-    "PHOTOSYNTHETICALLY ACTIVE RADIATION": "DOWNWELLING_PAR",
-    "PHOTOSYNTHETIC RADIATION": "DOWNWELLING_PAR",
-    "LIGHT": "DOWNWELLING_PAR",
-    "SUNLIGHT": "DOWNWELLING_PAR",
-    "IRRADIANCE": "DOWNWELLING_PAR",
-
-    # --- Downwelling Irradiance ---
-    "IR380": "DOWN_IRRADIANCE380",
-    "IRRADIANCE 380": "DOWN_IRRADIANCE380",
-    "IR412": "DOWN_IRRADIANCE412",
-    "IRRADIANCE 412": "DOWN_IRRADIANCE412",
-    "IR490": "DOWN_IRRADIANCE490",
-    "IRRADIANCE 490": "DOWN_IRRADIANCE490",
-}
+_TYPO_MAP = _ONTOLOGY_TYPO_CORRECTIONS
 
 
 def correct_variable_typo(token: str, cutoff: float = 0.75) -> Optional[str]:

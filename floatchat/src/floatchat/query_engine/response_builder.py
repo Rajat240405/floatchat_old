@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 
 from floatchat.models import MapData, ParsedIntent
+from floatchat.ontology.sensors import BGC_VARIABLE_MARKER_TOKENS, NETWORK_BGC, NETWORK_CORE
 from floatchat.query_engine.helpers import (
     _extract_cycle_from_filename,
     _extract_float_id_from_path,
@@ -39,7 +40,9 @@ def _build_map_data_from_lake(lake: Any, df: pd.DataFrame) -> list[MapData]:
         logger.debug("Float registry status lookup failed: %s", exc)
     seen: set[str] = set()
     # Pre-compute which floats carry any BGC variable, for Network derivation.
-    _BGC_VAR_MARKERS = ("DOXY", "CHLA", "NITRATE", "BBP", "PH_IN_SITU", "DOWNWELLING", "DOWN_IRR")
+    # Ontology 2.0 (Phase 1): marker tokens come from the domain ontology;
+    # contents are unchanged.
+    _BGC_VAR_MARKERS = BGC_VARIABLE_MARKER_TOKENS
     bgc_floats: set[str] = set()
     if not df.empty and "float_id" in df.columns:
         for _fid, _grp in df.groupby("float_id"):
@@ -85,7 +88,7 @@ def _build_map_data_from_lake(lake: Any, df: pd.DataFrame) -> list[MapData]:
                 variables=[],
                 selected=False,
                 status=status or "inactive",
-                network="BGC Argo" if fid in bgc_floats else "Core Argo",
+                network=NETWORK_BGC if fid in bgc_floats else NETWORK_CORE,
                 wmo_id=fid,
             )
         )

@@ -37,6 +37,7 @@ from floatchat.config import settings
 from floatchat.metadata_service.base import AbstractMetadataService
 from floatchat.models import ChatResponse, ParsedIntent
 from floatchat.netcdf_reader.base import AbstractNetCDFReader
+from floatchat.ontology.regions import INDIA_QUERY_REGIONS
 from floatchat.query_engine import dispatch
 from floatchat.query_engine.dispatch import _DATA_INTENTS
 from floatchat.repository_service.base import AbstractRepositoryService
@@ -94,7 +95,9 @@ class QueryEngine:
 
         # --- Phase 26: India-only Deployment Gate --- #
         if settings.deployment_mode == "INDIA_ONLY":
-            supported_india_regions = {"arabian_sea", "bay_of_bengal"}
+            # Ontology 2.0 (Phase 1): the supported-region set lives in the
+            # domain ontology (INDIA_QUERY_REGIONS); membership is unchanged.
+            supported_india_regions = INDIA_QUERY_REGIONS
             if intent.region and intent.region not in supported_india_regions:
                 return ChatResponse(
                     intent=intent.intent,

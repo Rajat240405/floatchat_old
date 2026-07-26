@@ -17,22 +17,17 @@ from plotly.subplots import make_subplots
 
 from floatchat.exceptions import VisualizationError
 from floatchat.models import ParsedIntent
+from floatchat.ontology.variables import LEVELS_VARIABLE_ORDER, VARIABLES
 from floatchat.visualization_engine.base import AbstractVisualizationEngine
 
 logger = logging.getLogger(__name__)
 
+# Ontology 2.0 (Phase 1): variable titles live in the domain ontology
+# (VariableDefinition.plot_title); contents are unchanged.
 _VAR_TITLES: dict[str, str] = {
-    "DOXY": "Dissolved Oxygen (µmol kg⁻¹)",
-    "CHLA": "Chlorophyll-A (mg m⁻³)",
-    "BBP700": "Particle Backscattering 700 nm (m⁻¹)",
-    "NITRATE": "Nitrate (µmol kg⁻¹)",
-    "PH_IN_SITU_TOTAL": "pH (total scale)",
-    "DOWNWELLING_PAR": "Downwelling PAR (µmol photons m⁻² s⁻¹)",
-    "DOWN_IRRADIANCE380": "Irradiance 380 nm",
-    "DOWN_IRRADIANCE412": "Irradiance 412 nm",
-    "DOWN_IRRADIANCE490": "Irradiance 490 nm",
-    "TEMP": "Temperature (°C)",
-    "PSAL": "Practical Salinity",
+    name: definition.plot_title
+    for name, definition in VARIABLES.items()
+    if definition.plot_title is not None
 }
 
 _COLOURS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
@@ -151,7 +146,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
 
         if not available and not intent.variables:
             # Fallback to any known var that exists
-            for cand in ["TEMP", "PSAL", "DOXY", "CHLA", "BBP700", "NITRATE", "PH_IN_SITU_TOTAL", "DOWNWELLING_PAR"]:
+            for cand in LEVELS_VARIABLE_ORDER:
                 if cand in df.columns and df[cand].notna().any():
                     available.append(cand)
                 elif f"{cand}_ADJUSTED" in df.columns and df[f"{cand}_ADJUSTED"].notna().any():
@@ -353,7 +348,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         available = list(dict.fromkeys(available))
 
         if not available and not intent.variables:
-            for cand in ["TEMP", "PSAL", "DOXY", "CHLA", "BBP700", "NITRATE", "PH_IN_SITU_TOTAL", "DOWNWELLING_PAR"]:
+            for cand in LEVELS_VARIABLE_ORDER:
                 if cand in df.columns and df[cand].notna().any():
                     available.append(cand)
                 elif f"{cand}_ADJUSTED" in df.columns and df[f"{cand}_ADJUSTED"].notna().any():
@@ -594,7 +589,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         if not available:
             raise VisualizationError("No numeric vars for comparison")
 
-        priority = ["TEMP","PSAL","DOXY","CHLA","BBP700","NITRATE","PH_IN_SITU_TOTAL","DOWNWELLING_PAR"]
+        priority = list(LEVELS_VARIABLE_ORDER)
         available_sorted = sorted(available, key=lambda x: priority.index(x) if x in priority else 99)
         available = available_sorted[:6]
 

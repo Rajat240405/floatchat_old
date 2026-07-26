@@ -4,84 +4,34 @@ This registry is the application-facing vocabulary for variables present in the
 Phase 2 data lake.  Adjusted variables are represented as a preferred storage
 variant of their canonical variable: query execution automatically prefers the
 adjusted column when it contains valid data.
+
+Ontology 2.0 (Phase 1): the registry *data* now lives in the domain ontology
+(:mod:`floatchat.ontology.variables`) — the single source of truth for Argo
+variable knowledge. This module keeps the registry API (and the
+``floatchat.variable_registry`` import path) as a stable façade over the
+ontology; only registered variables are exposed, exactly as before.
 """
 
-from dataclasses import dataclass, field
-from typing import List, Literal, Optional, Set
+from typing import List, Optional, Set
 
+from floatchat.ontology.variables import (
+    VARIABLES as _ONTOLOGY_VARIABLES,
+    VariableDefinition,
+)
 
-@dataclass(frozen=True)
-class VariableDefinition:
-    """Scientific and presentation metadata for one canonical variable."""
-
-    canonical: str
-    category: Literal["core", "bgc_primary", "intermediate"]
-    description: str
-    units: str
-    display_label: str
-    aliases: List[str] = field(default_factory=list)
-    abbreviations: List[str] = field(default_factory=list)
-    preferred_metadata_index: Literal["core", "bio", "synthetic"] = "core"
-    preferred_profile_type: Literal["R", "B", "S"] = "R"
-    adjusted_name: Optional[str] = None
-    qc_name: Optional[str] = None
-    error_name: Optional[str] = None
-    is_intermediate: bool = False
+__all__ = ["VariableDefinition", "VariableRegistry"]
 
 
 class VariableRegistry:
     """Single source of truth for supported application variables."""
 
+    # Registered (application-queryable) subset of the ontology. Membership is
+    # identical to the pre-ontology hand-maintained table (verified by
+    # tests/test_ontology).
     _REGISTRY: dict[str, VariableDefinition] = {
-        "PRES": VariableDefinition(
-            "PRES", "core", "Sea water pressure", "dbar", "Pressure (dbar)",
-            ["pressure", "depth", "pres"], ["p"], "core", "R",
-            "PRES_ADJUSTED", "PRES_QC", "PRES_ADJUSTED_ERROR",
-        ),
-        "TEMP": VariableDefinition(
-            "TEMP", "core", "Sea water temperature (ITS-90)", "°C", "Temperature (°C)",
-            ["temperature", "temp", "water temperature", "water temp", "sea temperature"],
-            ["sst"], "core", "R", "TEMP_ADJUSTED", "TEMP_QC", "TEMP_ADJUSTED_ERROR",
-        ),
-        "PSAL": VariableDefinition(
-            "PSAL", "core", "Practical salinity", "PSU", "Practical Salinity (PSU)",
-            ["salinity", "psal", "salt", "water salinity"], [], "core", "R",
-            "PSAL_ADJUSTED", "PSAL_QC", "PSAL_ADJUSTED_ERROR",
-        ),
-        "DOXY": VariableDefinition(
-            "DOXY", "bgc_primary", "Dissolved oxygen concentration", "µmol/kg", "Dissolved Oxygen (µmol kg⁻¹)",
-            ["oxygen", "dissolved oxygen", "doxy", "dissolved o2", "oxygen concentration"],
-            ["o2", "dox"], "bio", "B", "DOXY_ADJUSTED", "DOXY_QC", "DOXY_ADJUSTED_ERROR",
-        ),
-        "CHLA": VariableDefinition(
-            "CHLA", "bgc_primary", "Chlorophyll-a concentration", "mg/m³", "Chlorophyll-a (mg m⁻³)",
-            ["chlorophyll", "chlorophyll-a", "chlorophyll a", "chla", "phytoplankton"],
-            ["chl", "chl-a"], "bio", "B", "CHLA_ADJUSTED", "CHLA_QC", "CHLA_ADJUSTED_ERROR",
-        ),
-        "BBP700": VariableDefinition(
-            "BBP700", "bgc_primary", "Particle backscattering at 700 nm", "m⁻¹", "Particle Backscattering 700 nm (m⁻¹)",
-            ["backscatter", "backscattering", "particle backscatter", "particle backscattering", "particulate backscatter", "bbp700"],
-            ["bbp"], "bio", "B", "BBP700_ADJUSTED", "BBP700_QC", "BBP700_ADJUSTED_ERROR",
-        ),
-        "NITRATE": VariableDefinition(
-            "NITRATE", "bgc_primary", "Nitrate concentration", "µmol/kg", "Nitrate (µmol kg⁻¹)",
-            ["nitrate", "nitrate concentration", "no3", "nitrogen"], [], "bio", "B",
-            "NITRATE_ADJUSTED", "NITRATE_QC", "NITRATE_ADJUSTED_ERROR",
-        ),
-        "PH_IN_SITU_TOTAL": VariableDefinition(
-            "PH_IN_SITU_TOTAL", "bgc_primary", "In-situ pH on the total scale", "total scale", "In-situ pH (total scale)",
-            ["ph", "pH", "ph level", "acidity", "in situ ph", "ph in situ total"], [], "bio", "B",
-            "PH_IN_SITU_TOTAL_ADJUSTED", "PH_IN_SITU_TOTAL_QC", "PH_IN_SITU_TOTAL_ADJUSTED_ERROR",
-        ),
-        "DOWNWELLING_PAR": VariableDefinition(
-            "DOWNWELLING_PAR", "bgc_primary", "Downwelling photosynthetically active radiation", "µmol photons m⁻² s⁻¹", "Downwelling PAR (µmol photons m⁻² s⁻¹)",
-            ["par", "downwelling par", "photosynthetically active radiation", "photosynthetic radiation", "underwater sunlight"], [], "bio", "B",
-            "DOWNWELLING_PAR_ADJUSTED", "DOWNWELLING_PAR_QC", "DOWNWELLING_PAR_ADJUSTED_ERROR",
-        ),
-        "TEMP_DOXY": VariableDefinition(
-            "TEMP_DOXY", "intermediate", "Optode thermistor temperature (diagnostic)", "°C", "Optode Temperature (°C)",
-            ["optode temperature"], [], "bio", "B", is_intermediate=True,
-        ),
+        name: definition
+        for name, definition in _ONTOLOGY_VARIABLES.items()
+        if definition.registered
     }
 
     @classmethod

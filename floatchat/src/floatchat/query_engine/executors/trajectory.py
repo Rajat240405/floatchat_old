@@ -16,6 +16,7 @@ import pandas as pd
 
 from floatchat.config import settings
 from floatchat.models import ChatResponse, MapData, ParsedIntent, SearchCriteria
+from floatchat.ontology.sensors import BGC_VARIABLE_MARKER_TOKENS, NETWORK_BGC, NETWORK_CORE
 from floatchat.query_engine.helpers import _extract_cycle_from_filename
 
 if TYPE_CHECKING:
@@ -172,9 +173,11 @@ def execute_trajectory(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0: f
     # Derive Network for the whole float from the union of cycle variables:
     # any BGC variable => BGC Argo, otherwise Core Argo. Applied to all
     # trajectory markers so the sidebar Network filter is consistent.
+    # Ontology 2.0 (Phase 1): marker tokens and network names come from the
+    # domain ontology; contents are unchanged.
     _all_vars = " ".join(v.upper() for m in map_data for v in m.variables)
-    _BGC_VAR_MARKERS = ("DOXY", "CHLA", "NITRATE", "BBP", "PH_IN_SITU", "DOWNWELLING", "DOWN_IRR")
-    _traj_network = "BGC Argo" if any(mk in _all_vars for mk in _BGC_VAR_MARKERS) else "Core Argo"
+    _BGC_VAR_MARKERS = BGC_VARIABLE_MARKER_TOKENS
+    _traj_network = NETWORK_BGC if any(mk in _all_vars for mk in _BGC_VAR_MARKERS) else NETWORK_CORE
     for _m in map_data:
         _m.network = _traj_network
 

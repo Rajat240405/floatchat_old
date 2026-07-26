@@ -19,6 +19,13 @@ import pandas as pd
 
 from floatchat.config import settings
 from floatchat.models import ParsedIntent
+from floatchat.ontology.sensors import (
+    BGC_VARIABLE_MARKER_TOKENS,
+    NETWORK_BGC,
+    NETWORK_CORE,
+    manufacturer_short_lookup,
+    sensor_keywords_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,37 +46,11 @@ def _figure_metrics(figures: list[dict[str, Any]] | None) -> tuple[int, int, int
     return traces, points, payload
 
 
-_PROFILER_MFR_MAP: dict[str, str] = {
-    "831": "Teledyne Webb",
-    "832": "Teledyne Webb",
-    "833": "Teledyne Webb",
-    "834": "Teledyne Webb",
-    "835": "Teledyne Webb",
-    "836": "Teledyne CARAIBE",
-    "837": "Teledyne CARAIBE",
-    "838": "Teledyne CARAIBE",
-    "839": "Teledyne CARAIBE",
-    "840": "Teledyne CARAIBE",
-    "841": "Teledyne CARAIBE",
-    "842": "Teledyne CARAIBE",
-    "843": "Teledyne CARAIBE",
-    "844": "Teledyne CARAIBE",
-    "845": "Teledyne Webb",
-    "846": "Tsurumi Seiki",
-    "847": "Tsurumi Seiki",
-    "848": "Nortek",
-    "849": "Nortek",
-    "850": "Scripps/Floats Inc.",
-    "851": "Scripps/Floats Inc.",
-    "852": "Scripps/Floats Inc.",
-    "853": "Scripps/Floats Inc.",
-    "854": "Scripps/Floats Inc.",
-    "860": "Teledyne CARAIBE",
-    "861": "Teledyne CARAIBE",
-    "862": "Teledyne CARAIBE",
-    "863": "Teledyne CARAIBE",
-    "864": "Teledyne CARAIBE",
-}
+# Ontology 2.0 (Phase 1): profiler platform/manufacturer knowledge lives in
+# the domain ontology (PLATFORM_MODELS). This map derives from the ontology
+# with the country suffix stripped — contents are identical to the legacy
+# hand-maintained table (verified by tests/test_ontology).
+_PROFILER_MFR_MAP: dict[str, str] = manufacturer_short_lookup()
 
 
 def _resolve_manufacturer(profiler_type: str | None) -> str | None:
@@ -85,7 +66,9 @@ def _resolve_manufacturer(profiler_type: str | None) -> str | None:
 # The frontend sidebar filters drop markers whose region_tag is empty when a
 # region filter is active, so nearest-float and radius-search results
 # disappeared from the map entirely under active filters.
-_BGC_VAR_MARKERS = ("DOXY", "CHLA", "NITRATE", "BBP", "PH_IN_SITU", "DOWNWELLING", "DOWN_IRR")
+# Ontology 2.0 (Phase 1): the BGC marker tokens live in the domain ontology
+# (BGC_VARIABLE_MARKER_TOKENS — the three legacy copies were identical).
+_BGC_VAR_MARKERS = BGC_VARIABLE_MARKER_TOKENS
 
 
 def _derive_marker_network(variables: Any) -> str:
@@ -96,7 +79,7 @@ def _derive_marker_network(variables: Any) -> str:
     otherwise "Core Argo".
     """
     blob = " ".join(str(v).upper() for v in (variables or []))
-    return "BGC Argo" if any(mk in blob for mk in _BGC_VAR_MARKERS) else "Core Argo"
+    return NETWORK_BGC if any(mk in blob for mk in _BGC_VAR_MARKERS) else NETWORK_CORE
 
 
 def _marker_region_tag(lat: float | None, lon: float | None) -> str | None:
@@ -205,17 +188,11 @@ def _filter_floats_by_variable(
     if df.empty or not variables:
         return df
 
-    # Build a set of variable keywords to search for in the sensors column
-    _VAR_SENSOR_MAP = {
-        "TEMP": ["CTD", "TEMP", "SST"],
-        "PSAL": ["CTD", "PSAL", "SALINITY"],
-        "DOXY": ["OPTODE", "DOXY", "OXYGEN", "AANDERAA"],
-        "CHLA": ["FLUOROMETER", "CHLA", "CHLOROPHYLL", "ECO"],
-        "NITRATE": ["NITRATE", "SUNA", "ISUS", "ISUS_NITRATE"],
-        "BBP700": ["BACKSCATTER", "BBP", "ECO", "FLBBCD"],
-        "PH_IN_SITU_TOTAL": ["PH", "SBE_PH"],
-        "DOWNWELLING_PAR": ["PAR", "RADIOMETER", "OCR"],
-    }
+    # Build a set of variable keywords to search for in the sensors column.
+    # Ontology 2.0 (Phase 1): the variable → sensor-token map lives in the
+    # domain ontology (VariableDefinition.sensor_keywords); contents are
+    # unchanged.
+    _VAR_SENSOR_MAP = sensor_keywords_map()
 
     float_ids = df["float_id"].astype(str).tolist()
 

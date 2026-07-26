@@ -37,7 +37,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from floatchat.config import settings
 from floatchat.metadata_service.gdac import GDACMetadataService
-from floatchat.metadata_service.polygons import point_in_region
+from floatchat.ontology.regions import (
+    INDIA_DEPLOYMENT_BBOX,
+    REGIONS,
+    tag_india_region,
+)
 from floatchat.repository_service.gdac_http import GDACRepositoryService
 from floatchat.models import SearchCriteria
 
@@ -51,9 +55,10 @@ logger = logging.getLogger(__name__)
 _GDAC_NETCDF_BASE = "https://data-argo.ifremer.fr"
 
 # India region bounding boxes (coarse filter before polygon test).
+# Ontology 2.0 (Phase 1): bounding boxes live in the domain ontology
+# (RegionDefinition.bbox); contents are unchanged.
 _INDIA_BOUNDS = {
-    "arabian_sea": {"lat_min": 0.0, "lat_max": 30.0, "lon_min": 45.0, "lon_max": 80.0},
-    "bay_of_bengal": {"lat_min": 0.0, "lat_max": 25.0, "lon_min": 78.0, "lon_max": 100.0},
+    name: REGIONS[name].bbox for name in ("arabian_sea", "bay_of_bengal")
 }
 
 # Default output root.
@@ -62,16 +67,18 @@ _DEFAULT_OUTPUT = Path(".data_lake/parquet")
 
 def _is_india_region(lat: float, lon: float) -> bool:
     """Return True if coordinate is within the India box -10 to 30N, 40 to 100E across all DACs."""
-    return -10.0 <= lat <= 30.0 and 40.0 <= lon <= 100.0
+    # Ontology 2.0 (Phase 1): the deployment bounding box is INDIA_DEPLOYMENT_BBOX.
+    return (
+        INDIA_DEPLOYMENT_BBOX["lat_min"] <= lat <= INDIA_DEPLOYMENT_BBOX["lat_max"]
+        and INDIA_DEPLOYMENT_BBOX["lon_min"] <= lon <= INDIA_DEPLOYMENT_BBOX["lon_max"]
+    )
 
 
 def _build_region_tag(lat: float, lon: float) -> str:
     """Return canonical region tag for a coordinate inside the Indian Ocean box."""
-    if point_in_region(lon, lat, "arabian_sea"):
-        return "arabian_sea"
-    if point_in_region(lon, lat, "bay_of_bengal"):
-        return "bay_of_bengal"
-    return "indian_ocean"
+    # Ontology 2.0 (Phase 1): the sub-region rule lives in the domain ontology
+    # (tag_india_region); the ETL "indian_ocean" fallback is preserved.
+    return tag_india_region(lat, lon) or "indian_ocean"
 
 
 def _load_india_metadata(year: int | None, month: int | None, max_files: int = 2000) -> list:

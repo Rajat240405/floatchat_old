@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from floatchat.visualization_engine.base import AbstractVisualizationEngine
 
 from floatchat.models import ChatResponse, ParsedIntent
+from floatchat.ontology.intents import NON_DATA_INTENTS
 from floatchat.query_engine.executors import metadata as _metadata_executors
 from floatchat.query_engine.executors import profile as _profile_executor
 from floatchat.query_engine.executors import spatial, trajectory
@@ -42,13 +43,9 @@ from floatchat.query_engine.executors import spatial, trajectory
 _INTENT_VOCABULARY = frozenset(get_args(ParsedIntent.model_fields["intent"].annotation))
 
 # Intents handled before/outside the data pipeline (chat routing, guard rails).
-_NON_DATA_INTENTS = frozenset({
-    "general_chat",
-    "unknown",
-    "small_talk",
-    "out_of_domain",
-    "knowledge_base",
-})
+# Ontology 2.0 (Phase 1): the membership lives in the domain ontology
+# (floatchat.ontology.intents.NON_DATA_INTENTS); the set is unchanged.
+_NON_DATA_INTENTS = NON_DATA_INTENTS
 
 # All data intents that MUST go through the local data lake
 _DATA_INTENTS = _INTENT_VOCABULARY - _NON_DATA_INTENTS

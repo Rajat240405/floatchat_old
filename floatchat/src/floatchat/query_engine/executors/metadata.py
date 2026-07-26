@@ -15,6 +15,7 @@ import pandas as pd
 
 from floatchat.config import settings
 from floatchat.models import ChatResponse, MapData, ParsedIntent, SearchCriteria
+from floatchat.ontology.sensors import DAC_NAMES, platform_shortlist
 from floatchat.query_engine.helpers import (
     _derive_marker_network,
     _marker_region_tag,
@@ -83,34 +84,18 @@ def execute_metadata_lookup(deps: ExecutionDeps, intent: ParsedIntent, pipeline_
 
                 if not info.get("institution") or str(info.get("institution", "")).strip() in ("", "unknown", "None"):
                     dac_code = str(latest.institution).strip().upper()
-                    DAC_MAP = {
-                        "IF": "IFREMER (Coriolis)",
-                        "IN": "INCOIS (India)",
-                        "AO": "AOML (NOAA)",
-                        "JM": "JMA (Japan)",
-                        "CS": "CSIRO (Australia)",
-                        "KM": "KORDI / KMA (Korea)",
-                        "BO": "BODC (UK)",
-                        "HZ": "CSIO (China)",
-                    }
+                    # Ontology 2.0 (Phase 1): DAC names live in the domain
+                    # ontology (verbatim relocation).
+                    DAC_MAP = DAC_NAMES
                     info["institution"] = DAC_MAP.get(dac_code, latest.institution or "unknown")
 
                 if not info.get("profiler_type") or str(info.get("profiler_type", "")).strip() in ("", "unknown", "None"):
                     info["profiler_type"] = latest.profiler_type
 
                 code_str = str(info.get("profiler_type", "")).strip()
-                PROFILER_MAP = {
-                    "836": "PROVOR CTS4",
-                    "837": "PROVOR CTS5",
-                    "841": "PROVOR",
-                    "842": "PROVOR",
-                    "831": "APEX",
-                    "832": "APEX",
-                    "845": "NAVIS",
-                    "851": "SOLO",
-                    "861": "ARVOR",
-                    "862": "ARVOR",
-                }
+                # Ontology 2.0 (Phase 1): the platform display shortlist lives
+                # in the domain ontology (verbatim relocation).
+                PROFILER_MAP = platform_shortlist()
                 if code_str in PROFILER_MAP and info.get("platform_type") in (None, "unknown", ""):
                     info["platform_type"] = PROFILER_MAP[code_str]
 

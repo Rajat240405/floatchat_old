@@ -27,6 +27,8 @@ from typing import Any, Dict, List, Literal, Optional
 import numpy as np
 import pandas as pd
 
+from floatchat.ontology.variables import VARIABLES as _ONTOLOGY_VARIABLES
+
 from ..models.intent import ParsedIntent
 from ..models.metadata import MetadataRecord
 from .engine import ScientificExplanationEngine
@@ -48,28 +50,17 @@ _FLOAT_ID_RE = re.compile(r"/([\d]{7,})/")
 _MAX_NARRATION_PROFILES = 3
 _MAX_NARRATION_GDAC_FILES = 3
 
-# Units registry – expandable for NITRATE, pH, CDOM, etc. without prompt changes
+# Units registry – expandable for NITRATE, pH, etc. without prompt changes.
+# Ontology 2.0 (Phase 1): prompt-surface unit spellings live in the domain
+# ontology (VariableDefinition.prompt_units); contents are unchanged. CDOM is
+# not a canonical Argo variable in this deployment, so its local entry stays.
 _UNITS: Dict[str, str] = {
-    "TEMP": "°C",
-    "TEMP_ADJUSTED": "°C",
-    "PSAL": "PSU",
-    "PSAL_ADJUSTED": "PSU",
-    "DOXY": "µmol/kg",
-    "DOXY_ADJUSTED": "µmol/kg",
-    "CHLA": "mg/m³",
-    "CHLA_ADJUSTED": "mg/m³",
-    "BBP700": "m^-1",
-    "BBP700_ADJUSTED": "m^-1",
-    # Future BGC – schema already supports them, extractor just needs units:
-    "NITRATE": "µmol/kg",
-    "NITRATE_ADJUSTED": "µmol/kg",
-    "PH_IN_SITU_TOTAL": "total scale",
-    "PH_IN_SITU_TOTAL_ADJUSTED": "total scale",
-    "DOWNWELLING_PAR": "µmol quanta/m²/s",
-    "DOWNWELLING_PAR_ADJUSTED": "µmol quanta/m²/s",
-    "CDOM": "ppb",
-    "CDOM_ADJUSTED": "ppb",
+    f"{name}{suffix}": definition.prompt_units
+    for name, definition in _ONTOLOGY_VARIABLES.items()
+    if definition.prompt_units is not None
+    for suffix in ("", "_ADJUSTED")
 }
+_UNITS.update({"CDOM": "ppb", "CDOM_ADJUSTED": "ppb"})
 
 # ------------------------------------------------------------------
 # Phase 1: deterministic feature classifications

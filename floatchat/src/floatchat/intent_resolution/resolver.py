@@ -18,6 +18,10 @@ from floatchat.intent_resolution.llm_compiler import LLMIntentCompiler
 from floatchat.exceptions import IntentParseError
 from floatchat.intent_parser.base import AbstractIntentParser
 from floatchat.models import ParsedIntent
+from floatchat.ontology.intents import (
+    SCIENTIFIC_CONTEXT_INTENTS,
+    SCIENTIFIC_FOLLOWUP_INTENTS,
+)
 from floatchat.variable_registry.registry import VariableRegistry
 
 logger = logging.getLogger(__name__)
@@ -97,10 +101,8 @@ class IntentResolver:
         if (
             previous_context is not None
             and self._context_dependent(message)
-            and previous_context.last_intent in {
-                "profile_plot", "time_series", "hovmoller", "ts_diagram",
-                "comparison_plot", "comparison", "trajectory",
-            }
+            # Ontology 2.0 (Phase 1): SCIENTIFIC_CONTEXT_INTENTS (unchanged).
+            and previous_context.last_intent in SCIENTIFIC_CONTEXT_INTENTS
         ):
             data = parsed.model_dump()
             if parsed.intent == "unknown":
@@ -127,10 +129,8 @@ class IntentResolver:
             parsed.intent == "unknown"
             and ref.has_reference
             and previous_context is not None
-            and previous_context.last_intent in {
-                "profile_plot", "time_series", "hovmoller", "ts_diagram",
-                "comparison_plot", "comparison",
-            }
+            # Ontology 2.0 (Phase 1): SCIENTIFIC_FOLLOWUP_INTENTS (unchanged).
+            and previous_context.last_intent in SCIENTIFIC_FOLLOWUP_INTENTS
         ):
             parsed.intent = previous_context.last_intent
 

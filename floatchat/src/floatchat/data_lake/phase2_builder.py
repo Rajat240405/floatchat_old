@@ -46,7 +46,7 @@ if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
 from floatchat.config import settings
-from floatchat.metadata_service.polygons import point_in_region
+from floatchat.ontology.regions import INDIA_DEPLOYMENT_BBOX, tag_india_region
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,11 +60,13 @@ GDAC_BASE = "https://data-argo.ifremer.fr"
 CORE_INDEX_URL = f"{GDAC_BASE}/ar_index_global_prof.txt.gz"
 BIO_INDEX_URL = f"{GDAC_BASE}/argo_bio-profile_index.txt.gz"
 
-# India bounding box (matches metadata_service/regions.py)
-INDIA_LAT_MIN = -10.0
-INDIA_LAT_MAX = 30.0
-INDIA_LON_MIN = 40.0
-INDIA_LON_MAX = 100.0
+# India bounding box (matches metadata_service/regions.py).
+# Ontology 2.0 (Phase 1): single-sourced from the domain ontology's
+# INDIA_DEPLOYMENT_BBOX; values are unchanged.
+INDIA_LAT_MIN = INDIA_DEPLOYMENT_BBOX["lat_min"]
+INDIA_LAT_MAX = INDIA_DEPLOYMENT_BBOX["lat_max"]
+INDIA_LON_MIN = INDIA_DEPLOYMENT_BBOX["lon_min"]
+INDIA_LON_MAX = INDIA_DEPLOYMENT_BBOX["lon_max"]
 
 # HTTP settings
 HTTP_TIMEOUT = 120
@@ -184,11 +186,9 @@ def load_index_csv(path: Path) -> list[dict[str, Any]]:
 
 def _classify_region(lat: float, lon: float) -> str:
     """Classify coordinate into India sub-region."""
-    if point_in_region(lon, lat, "arabian_sea"):
-        return "arabian_sea"
-    if point_in_region(lon, lat, "bay_of_bengal"):
-        return "bay_of_bengal"
-    return "indian_ocean"
+    # Ontology 2.0 (Phase 1): the sub-region rule lives in the domain ontology
+    # (tag_india_region); the ETL "indian_ocean" fallback is preserved.
+    return tag_india_region(lat, lon) or "indian_ocean"
 
 
 def download_netcdf(file_path: str, dest_dir: Path, client: httpx.Client | None = None) -> Path | None:

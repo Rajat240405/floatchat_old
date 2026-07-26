@@ -16,6 +16,8 @@ from floatchat.intent_parser.base import AbstractIntentParser
 from floatchat.intent_parser.fuzzy import correct_variables_with_fuzzy
 from floatchat.intent_parser.gazetteer import resolve_place_name
 from floatchat.models import ParsedIntent
+from floatchat.ontology.regions import OCEAN_REGION_PLACE_NAMES, REGIONS
+from floatchat.ontology.variables import LEVELS_VARIABLE_ORDER, VARIABLES
 from floatchat.query_normalizer import (
     AbstractQueryNormalizer,
     FallbackQueryNormalizer,
@@ -28,76 +30,12 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 # Maps canonical Argo names → list of natural-language synonyms.
 # Synonyms are matched with word boundaries where appropriate.
+# Ontology 2.0 (Phase 1): the synonym lists live in the domain ontology
+# (VariableDefinition.parser_synonyms); contents are unchanged.
 _VARIABLE_SYNONYMS: dict[str, list[str]] = {
-    "DOXY": [
-        "oxygen",
-        "dissolved oxygen",
-        "doxy",
-        "o2",
-        "dox",
-        "oxy",
-        "dissolved o2",
-    ],
-    "CHLA": [
-        "chlorophyll",
-        "chlorophyll-a",
-        "chla",
-        "chlorophyll a",
-        "chl",
-        "chl-a",
-        "phytoplankton",
-    ],
-    "BBP700": [
-        "backscattering",
-        "bbp700",
-        "particle backscattering",
-        "backscatter",
-        "bbp",
-        "particulate backscatter",
-    ],
-    "NITRATE": [
-        "nitrate",
-        "no3",
-        "nitrogen",
-    ],
-    "PH_IN_SITU_TOTAL": [
-        "ph",
-        "acidity",
-        "ph in situ total",
-        "ph level",
-    ],
-    "DOWNWELLING_PAR": [
-        "par",
-        "photosynthetically active radiation",
-        "downwelling par",
-        "sunlight",
-    ],
-    "DOWN_IRRADIANCE380": [
-        "irradiance 380",
-        "down irradiance 380",
-        "ir380",
-    ],
-    "DOWN_IRRADIANCE412": [
-        "irradiance 412",
-        "down irradiance 412",
-        "ir412",
-    ],
-    "DOWN_IRRADIANCE490": [
-        "irradiance 490",
-        "down irradiance 490",
-        "ir490",
-    ],
-    "TEMP": [
-        "temperature",
-        "temp",
-        "sst",
-        "water temp",
-    ],
-    "PSAL": [
-        "salinity",
-        "psal",
-        "salt",
-    ],
+    name: list(definition.parser_synonyms)
+    for name, definition in VARIABLES.items()
+    if definition.parser_synonyms
 }
 
 # Build regex patterns for each canonical variable.
@@ -113,20 +51,11 @@ for canonical, synonyms in _VARIABLE_SYNONYMS.items():
 # --------------------------------------------------------------------------- #
 # Region synonyms
 # --------------------------------------------------------------------------- #
+# Ontology 2.0 (Phase 1): region aliases live in the domain ontology
+# (RegionDefinition.aliases); contents and ordering are unchanged (order is
+# observable: the region extractor returns the first matching region).
 _REGION_SYNONYMS: dict[str, list[str]] = {
-    "arabian_sea": ["arabian sea"],
-    "bay_of_bengal": ["bay of bengal"],
-    "north_atlantic": ["north atlantic"],
-    "south_atlantic": ["south atlantic"],
-    "north_pacific": ["north pacific"],
-    "south_pacific": ["south pacific"],
-    "indian_ocean": ["indian ocean"],
-    "southern_ocean": ["southern ocean"],
-    "mediterranean_sea": ["mediterranean", "mediterranean sea"],
-    "red_sea": ["red sea"],
-    "gulf_of_mexico": ["gulf of mexico"],
-    "tasman_sea": ["tasman sea"],
-    "caribbean_sea": ["caribbean sea"],
+    name: list(definition.aliases) for name, definition in REGIONS.items()
 }
 
 # Build regex patterns for regions (phrases with spaces need special handling).
@@ -361,11 +290,9 @@ class RegexIntentParser(AbstractIntentParser):
         # If we don't have coordinates yet, try to extract a place name
         # Phase 6 fix: Skip gazetteer if region already detected (e.g., "near arabian sea" should use region, not Nominatim)
         # and skip if extracted place is itself a known ocean region synonym (prevents Nominatim mis-resolving "arabian sea" to Pakistan)
-        _OCEAN_REGION_PLACES = {
-            "arabian sea", "arabian", "bay of bengal", "bengal", "indian ocean", "indian",
-            "north atlantic", "south atlantic", "north pacific", "south pacific",
-            "southern ocean", "mediterranean", "red sea", "gulf of mexico",
-        }
+        # Ontology 2.0 (Phase 1): the skip-list lives in the domain ontology
+        # (OCEAN_REGION_PLACE_NAMES); membership is unchanged.
+        _OCEAN_REGION_PLACES = OCEAN_REGION_PLACE_NAMES
         place_resolved = None
         place_attempted = False
         if lat is None and lon is None:
@@ -500,7 +427,9 @@ class RegexIntentParser(AbstractIntentParser):
                 # If Core: TEMP, PSAL. If BGC: also DOXY, CHLA, BBP700, NITRATE, PH, PAR.
                 # We request all core + common BGC so DataFrame contains whatever exists.
                 # Visualization will auto-filter to those present.
-                variables = ["TEMP", "PSAL", "DOXY", "CHLA", "BBP700", "NITRATE", "PH_IN_SITU_TOTAL", "DOWNWELLING_PAR"]
+                # Ontology 2.0 (Phase 1): the default comparison variable list
+                # is the ontology's LEVELS_VARIABLE_ORDER (same values/order).
+                variables = list(LEVELS_VARIABLE_ORDER)
 
         if (
             not variables

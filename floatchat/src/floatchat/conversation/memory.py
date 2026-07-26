@@ -20,16 +20,14 @@ from floatchat.config import settings
 from floatchat.conversation.base import AbstractConversationManager
 from floatchat.conversation.reference_phrases import detect_reference_phrases
 from floatchat.models import ChatResponse, ConversationContext, ParsedIntent
+from floatchat.ontology.intents import FLOAT_CENTRIC_INTENTS
 
 logger = logging.getLogger(__name__)
 
 # Intents that are "float-centric" — when the previous intent was one of these,
 # "it" in the follow-up resolves to the float_id.
-_FLOAT_CENTRIC_INTENTS = frozenset({
-    "trajectory",
-    "metadata_lookup",
-    "nearest_float",
-})
+# Ontology 2.0 (Phase 1): membership lives in the domain ontology (unchanged).
+_FLOAT_CENTRIC_INTENTS = FLOAT_CENTRIC_INTENTS
 
 
 class InMemoryConversationManager(AbstractConversationManager):

@@ -26,7 +26,8 @@ from floatchat.data_lake.base import (
     LakeQueryCriteria,
     LakeQueryResult,
 )
-from floatchat.metadata_service.polygons import point_in_region
+from floatchat.ontology.regions import tag_india_region
+from floatchat.ontology.sensors import DAC_NAMES, platform_lookup, platform_shortlist
 
 logger = logging.getLogger(__name__)
 
@@ -227,11 +228,9 @@ class DuckDBDataLake(AbstractDataLake):
 
     def get_region_tag(self, lat: float, lon: float) -> str | None:
         """Classify a coordinate into Indian Ocean sub-region."""
-        if point_in_region(lon, lat, "arabian_sea"):
-            return "arabian_sea"
-        if point_in_region(lon, lat, "bay_of_bengal"):
-            return "bay_of_bengal"
-        return None
+        # Ontology 2.0 (Phase 1): the tagging rule lives in the domain
+        # ontology (tag_india_region); semantics are unchanged.
+        return tag_india_region(lat, lon)
 
     def list_available_years(self) -> list[int]:
         """Return years that have Parquet partitions."""
@@ -1087,38 +1086,11 @@ class DuckDBDataLake(AbstractDataLake):
             logger.warning("query_radius_search failed: %s", exc)
             return pd.DataFrame()
 
-    # Phase 5 Part A: Manufacturer lookup from profiler type code
-    _PROFILER_MANUFACTURER_MAP: dict[str, tuple[str, str]] = {
-        "831": ("APEX", "Teledyne Webb (USA)"),
-        "832": ("APEX", "Teledyne Webb (USA)"),
-        "833": ("APEX", "Teledyne Webb (USA)"),
-        "834": ("APEX", "Teledyne Webb (USA)"),
-        "835": ("APEX", "Teledyne Webb (USA)"),
-        "836": ("PROVOR CTS4", "Teledyne CARAIBE (France)"),
-        "837": ("PROVOR CTS5", "Teledyne CARAIBE (France)"),
-        "838": ("PROVOR", "Teledyne CARAIBE (France)"),
-        "839": ("PROVOR", "Teledyne CARAIBE (France)"),
-        "840": ("PROVOR", "Teledyne CARAIBE (France)"),
-        "841": ("PROVOR", "Teledyne CARAIBE (France)"),
-        "842": ("PROVOR", "Teledyne CARAIBE (France)"),
-        "843": ("PROVOR", "Teledyne CARAIBE (France)"),
-        "844": ("PROVOR", "Teledyne CARAIBE (France)"),
-        "845": ("NAVIS", "Teledyne Webb (USA)"),
-        "846": ("NINJA", "Tsurumi Seiki (Japan)"),
-        "847": ("NINJA", "Tsurumi Seiki (Japan)"),
-        "848": ("NEMO", "Nortek (Norway)"),
-        "849": ("NEMO", "Nortek (Norway)"),
-        "850": ("SOLO", "Scripps/Floats Inc. (USA)"),
-        "851": ("SOLO", "Scripps/Floats Inc. (USA)"),
-        "852": ("SOLO", "Scripps/Floats Inc. (USA)"),
-        "853": ("SOLO", "Scripps/Floats Inc. (USA)"),
-        "854": ("SOLO", "Scripps/Floats Inc. (USA)"),
-        "860": ("ARVOR", "Teledyne CARAIBE (France)"),
-        "861": ("ARVOR", "Teledyne CARAIBE (France)"),
-        "862": ("ARVOR", "Teledyne CARAIBE (France)"),
-        "863": ("ARVOR", "Teledyne CARAIBE (France)"),
-        "864": ("ARVOR", "Teledyne CARAIBE (France)"),
-    }
+    # Phase 5 Part A: Manufacturer lookup from profiler type code.
+    # Ontology 2.0 (Phase 1): the platform/manufacturer table lives in the
+    # domain ontology (PLATFORM_MODELS → platform_lookup); contents are
+    # identical (verified by tests/test_ontology).
+    _PROFILER_MANUFACTURER_MAP: dict[str, tuple[str, str]] = platform_lookup()
 
     @staticmethod
     def _estimate_battery_status(
@@ -1229,28 +1201,10 @@ class DuckDBDataLake(AbstractDataLake):
         clean_fid = str(float_id).strip()
         reg_df = self.get_float_registry(float_id=clean_fid)
 
-        PROFILER_MAP = {
-            "836": "PROVOR CTS4",
-            "837": "PROVOR CTS5",
-            "841": "PROVOR",
-            "842": "PROVOR",
-            "831": "APEX",
-            "832": "APEX",
-            "845": "NAVIS",
-            "851": "SOLO",
-            "861": "ARVOR",
-            "862": "ARVOR",
-        }
-        DAC_MAP = {
-            "IF": "IFREMER (Coriolis)",
-            "IN": "INCOIS (India)",
-            "AO": "AOML (NOAA)",
-            "JM": "JMA (Japan)",
-            "CS": "CSIRO (Australia)",
-            "KM": "KORDI / KMA (Korea)",
-            "BO": "BODC (UK)",
-            "HZ": "CSIO (China)",
-        }
+        # Ontology 2.0 (Phase 1): the platform display shortlist and the DAC
+        # name map live in the domain ontology (verbatim relocation).
+        PROFILER_MAP = platform_shortlist()
+        DAC_MAP = DAC_NAMES
 
         info: dict[str, Any] = {
             "float_id": clean_fid,
@@ -1576,8 +1530,6 @@ class DuckDBDataLake(AbstractDataLake):
 
 def build_region_tag(lat: float, lon: float) -> str | None:
     """Classify a coordinate pair into an India sub-region tag."""
-    if point_in_region(lon, lat, "arabian_sea"):
-        return "arabian_sea"
-    if point_in_region(lon, lat, "bay_of_bengal"):
-        return "bay_of_bengal"
-    return None
+    # Ontology 2.0 (Phase 1): delegates to the domain ontology rule
+    # (tag_india_region); semantics are unchanged.
+    return tag_india_region(lat, lon)

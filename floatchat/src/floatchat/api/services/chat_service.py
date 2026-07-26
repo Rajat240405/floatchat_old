@@ -35,6 +35,7 @@ from floatchat.llm_service.base import AbstractLLMService
 from floatchat.llm_service.classifier import QueryClassifier
 from floatchat.llm_service.knowledge_base import KnowledgeBase
 from floatchat.models import ChatResponse, ParsedIntent
+from floatchat.ontology.intents import SCIENTIFIC_FOLLOWUP_INTENTS
 from floatchat.query_engine.engine import QueryEngine
 
 logger = logging.getLogger(__name__)
@@ -49,10 +50,9 @@ def _is_active_scientific_followup(message: str, context: Any | None) -> bool:
     """
     if context is None:
         return False
-    if getattr(context, "last_intent", None) not in {
-        "profile_plot", "time_series", "hovmoller", "ts_diagram",
-        "comparison_plot", "comparison",
-    }:
+    # Ontology 2.0 (Phase 1): the follow-up intent set lives in the domain
+    # ontology (SCIENTIFIC_FOLLOWUP_INTENTS); membership is unchanged.
+    if getattr(context, "last_intent", None) not in SCIENTIFIC_FOLLOWUP_INTENTS:
         return False
     if not (
         getattr(context, "last_float_id", None)

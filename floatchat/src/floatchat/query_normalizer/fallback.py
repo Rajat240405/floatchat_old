@@ -3,6 +3,11 @@
 import logging
 from typing import Dict
 
+from floatchat.ontology.variables import (
+    NORMALIZER_ABBREVIATIONS,
+    NORMALIZER_CANONICAL_TERMS,
+)
+
 try:
     from rapidfuzz import process, fuzz
 except ImportError:
@@ -13,31 +18,13 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-# High-confidence canonical targets (used by both LLM and fallback)
-_CANONICAL_TERMS = [
-    "temperature",
-    "chlorophyll",
-    "oxygen",
-    "dissolved oxygen",
-    "salinity",
-    "Arabian Sea",
-    "Bay of Bengal",
-    "Southern Ocean",
-    "Mediterranean Sea",
-    "TEMP",
-    "CHLA",
-    "DOXY",
-    "PSAL",
-]
+# High-confidence canonical targets (used by both LLM and fallback).
+# Ontology 2.0 (Phase 1): relocated verbatim to the domain ontology.
+_CANONICAL_TERMS = NORMALIZER_CANONICAL_TERMS
 
-# Lightweight abbreviation expansion (deterministic)
-_ABBREV_MAP: Dict[str, str] = {
-    "chl": "chlorophyll",
-    "temp": "temperature",
-    "dox": "dissolved oxygen",
-    "o2": "oxygen",
-    "psal": "salinity",
-}
+# Lightweight abbreviation expansion (deterministic).
+# Ontology 2.0 (Phase 1): relocated verbatim to the domain ontology.
+_ABBREV_MAP: Dict[str, str] = NORMALIZER_ABBREVIATIONS
 
 
 class FallbackQueryNormalizer:

@@ -10,6 +10,7 @@ from typing import Literal
 
 from floatchat.config import settings
 from floatchat.llm_service.base import AbstractLLMService
+from floatchat.ontology.intents import SCIENTIFIC_CONTEXT_INTENTS
 
 logger = logging.getLogger(__name__)
 
@@ -263,10 +264,9 @@ class QueryClassifier:
         if context is None:
             return False
         last_intent = getattr(context, "last_intent", None)
-        scientific_intents = {
-            "profile_plot", "time_series", "hovmoller", "ts_diagram",
-            "comparison_plot", "comparison", "trajectory",
-        }
+        # Ontology 2.0 (Phase 1): the scientific-intent set lives in the
+        # domain ontology (SCIENTIFIC_CONTEXT_INTENTS); membership unchanged.
+        scientific_intents = SCIENTIFIC_CONTEXT_INTENTS
         return bool(
             last_intent in scientific_intents
             and (
