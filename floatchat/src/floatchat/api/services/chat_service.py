@@ -26,8 +26,10 @@ from typing import Any
 from floatchat.config import settings
 from floatchat.conversation.base import AbstractConversationManager
 from floatchat.api.schemas import ChatRequest
+from floatchat.api.services.floats_service import build_available_plots_response
 from floatchat.exceptions import FloatChatError, IntentParseError
 from floatchat.intent_parser.base import AbstractIntentParser
+from floatchat.intent_parser.regex import is_available_plots_query
 from floatchat.intent_resolution.resolver import IntentResolver
 from floatchat.llm_service.base import AbstractLLMService
 from floatchat.llm_service.classifier import QueryClassifier
@@ -539,6 +541,64 @@ def handle_chat(
                 plan, intent, request, query_engine,
                 conversation_manager, knowledge_base, llm_service,
             )
+            conversation_manager.update_context(request.session_id, intent, response)
+            _log_response(response, request_t0)
+            return response
+
+        # Sprint 1 (Bug 2): deterministic interception of float *capability*
+        # questions ("What plots are available for float 2903467?"). These are
+        # routed to metadata_lookup by the parser; without this interception
+        # the metadata card is returned (or, pre-fix, a profile plot with
+        # every numeric column attempted — crashing Plotly). Respond with the
+        # deterministic capability listing instead: only variables that have
+        # at least one profile, no visualization. Mixed queries (e.g. "…and
+        # explain X") are handled by the mixed pipeline above.
+        if (
+            intent.intent == "metadata_lookup"
+            and intent.float_id
+            and is_available_plots_query(request.message)
+        ):
+            try:
+                availability = build_available_plots_response(intent.float_id)
+                variables = [item.variable for item in availability.plots]
+                if variables:
+                    message = (
+                        f"Available plots for Float {availability.float_id}: "
+                        f"{', '.join(variables)}."
+                    )
+                else:
+                    message = (
+                        f"No plottable variables were found for Float "
+                        f"{availability.float_id} in the local data lake."
+                    )
+                response = ChatResponse(
+                    intent="available_plots",
+                    message=message,
+                    figure=None,
+                    data_summary={
+                        "matched_records": 0,
+                        "float_id": availability.float_id,
+                        "available_plots": [
+                            item.model_dump() for item in availability.plots
+                        ],
+                    },
+                    map_data=[],
+                )
+            except Exception:
+                logger.exception(
+                    "available-plots interception failed for float %s",
+                    intent.float_id,
+                )
+                response = ChatResponse(
+                    intent="available_plots",
+                    message=(
+                        f"Could not determine the available plots for Float "
+                        f"{intent.float_id}."
+                    ),
+                    figure=None,
+                    data_summary={"matched_records": 0},
+                    map_data=[],
+                )
             conversation_manager.update_context(request.session_id, intent, response)
             _log_response(response, request_t0)
             return response

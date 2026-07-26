@@ -1430,6 +1430,36 @@ class DuckDBDataLake(AbstractDataLake):
 
         rms_root = self._phase2_root / "parquet" / "region_month_stats" if self._phase2_root else None
 
+        # Sprint 1 (Bug 6): verify the region_month_stats schema BEFORE using
+        # the fast path. Lakes built by older/parallel ETL versions may store
+        # different column names; blind-referencing them raised a DuckDB
+        # binder error ("Referenced column profile_count not found"), which —
+        # together with the missing pytz dependency breaking the profile_index
+        # fallback — surfaced as a zero count. DESCRIBE reads only parquet
+        # metadata (no row values, so no timestamp/tz conversion), making the
+        # probe cheap and independent of pytz.
+        if rms_root and rms_root.exists() and not float_id and not variables:
+            _rms_required = {"profile_count", "float_count", "region_tag", "year", "month"}
+            try:
+                _rms_pattern = (rms_root / "**" / "*.parquet").as_posix()
+                _rms_cols = {
+                    row[0]
+                    for row in conn.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet('{_rms_pattern}', hive_partitioning=true)"
+                    ).fetchall()
+                }
+            except Exception as exc:
+                logger.warning("region_month_stats schema probe failed: %s", exc)
+                _rms_cols = set()
+            if not _rms_required.issubset(_rms_cols):
+                logger.info(
+                    "region_month_stats fast path skipped: missing columns %s "
+                    "(present: %s) — counting from profile_index instead",
+                    sorted(_rms_required - _rms_cols),
+                    sorted(_rms_cols),
+                )
+                rms_root = None
+
         if rms_root and rms_root.exists() and not float_id and not variables:
             pattern = (rms_root / "**" / "*.parquet").as_posix()
             parts: list[str] = []

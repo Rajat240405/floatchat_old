@@ -80,6 +80,38 @@ def _resolve_manufacturer(profiler_type: str | None) -> str | None:
     return _PROFILER_MFR_MAP.get(code)
 
 
+# Sprint 1 (Bug 5): spatial/metadata map markers must carry the same
+# region_tag / network / wmo_id fields as trajectory and data-query markers.
+# The frontend sidebar filters drop markers whose region_tag is empty when a
+# region filter is active, so nearest-float and radius-search results
+# disappeared from the map entirely under active filters.
+_BGC_VAR_MARKERS = ("DOXY", "CHLA", "NITRATE", "BBP", "PH_IN_SITU", "DOWNWELLING", "DOWN_IRR")
+
+
+def _derive_marker_network(variables: Any) -> str:
+    """Derive the Argo network from sensor/variable names.
+
+    Mirrors the trajectory executor + response builder semantics: any BGC
+    variable/sensor token present in the evidence means "BGC Argo",
+    otherwise "Core Argo".
+    """
+    blob = " ".join(str(v).upper() for v in (variables or []))
+    return "BGC Argo" if any(mk in blob for mk in _BGC_VAR_MARKERS) else "Core Argo"
+
+
+def _marker_region_tag(lat: float | None, lon: float | None) -> str | None:
+    """Classify marker coordinates into the India sub-region tag.
+
+    Returns None outside the known regions (honest: the marker simply is not
+    part of either filterable region).
+    """
+    if lat is None or lon is None:
+        return None
+    from floatchat.data_lake.duckdb_lake import build_region_tag
+
+    return build_region_tag(float(lat), float(lon))
+
+
 _FLOAT_ID_RE = re.compile(r"/([\d]{7,})/")
 
 

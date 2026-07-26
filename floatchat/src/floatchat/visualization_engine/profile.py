@@ -122,7 +122,16 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         t_prepare_start = t_plot_start
         variables = intent.variables or []
         if not variables:
-            exclude = {"PRES", "profile_idx", "level_idx"}
+            # Sprint 1 (Bug 8): identifiers, coordinates and time columns are
+            # numeric but are NOT plottable variables. Letting them through
+            # inflated n_vars to ~20, and with a fixed vertical spacing the
+            # subplot grid became geometrically impossible (Plotly raises
+            # "vertical spacing cannot be greater than 1/(rows-1)").
+            exclude = {
+                "PRES", "profile_idx", "level_idx",
+                "float_id", "cycle_number", "year", "month", "date",
+                "lat", "lon", "latitude", "longitude",
+            }
             variables = [
                 c for c in df.columns
                 if c not in exclude and not c.endswith("_QC") and not c.endswith("_ADJUSTED") and not c.endswith("_ADJUSTED_QC")
@@ -156,6 +165,11 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         cols = min(3, n_vars)
         rows = math.ceil(n_vars / cols)
 
+        # Sprint 1 (Bug 8): Plotly requires vertical_spacing <= 1/(rows-1).
+        # Clamp the nominal 0.18 so the figure renders no matter how many
+        # variables are requested (0.9 factor keeps a safety margin).
+        v_spacing = min(0.18, 0.9 / (rows - 1)) if rows > 1 else 0.18
+
         t_construct_start = time.perf_counter()
         fig = make_subplots(
             rows=rows,
@@ -163,7 +177,7 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
             shared_yaxes=False,
             shared_xaxes=False,
             horizontal_spacing=0.10,
-            vertical_spacing=0.18,
+            vertical_spacing=v_spacing,
             subplot_titles=[_VAR_TITLES.get(v, v) for v in available],
         )
 
@@ -588,12 +602,16 @@ class ProfileVisualizationEngine(AbstractVisualizationEngine):
         cols = min(2, n_vars)
         rows = math.ceil(n_vars / cols)
 
+        # Sprint 1 (Bug 8): same geometric clamp as the main profile render —
+        # Plotly requires vertical_spacing <= 1/(rows-1).
+        v_spacing = min(0.15, 0.9 / (rows - 1)) if rows > 1 else 0.15
+
         fig = make_subplots(
             rows=rows, cols=cols,
             shared_yaxes=False,
             shared_xaxes=False,
             horizontal_spacing=0.12,
-            vertical_spacing=0.15,
+            vertical_spacing=v_spacing,
             subplot_titles=[_VAR_TITLES.get(v,v) for v in available],
         )
 

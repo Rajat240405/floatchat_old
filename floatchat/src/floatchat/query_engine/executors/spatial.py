@@ -16,7 +16,9 @@ from floatchat.config import settings
 from floatchat.models import ChatResponse, MapData, ParsedIntent
 from floatchat.query_engine.helpers import (
     _build_alive_window,
+    _derive_marker_network,
     _filter_floats_by_variable,
+    _marker_region_tag,
     _resolve_manufacturer,
 )
 
@@ -51,6 +53,7 @@ def execute_nearest_float(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
 
                 profiler_code = str(row.get("profiler_type", "")).strip()
                 mfr = _resolve_manufacturer(profiler_code)
+                marker_vars = [s.strip() for s in sensors.split(",") if s.strip()] if sensors else []
 
                 map_data.append(
                     MapData(
@@ -59,11 +62,14 @@ def execute_nearest_float(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
                         longitude=lon_val,
                         profile_date=last_date if last_date else None,
                         dac=str(row.get("institution", "")),
-                        variables=[s.strip() for s in sensors.split(",") if s.strip()] if sensors else [],
+                        variables=marker_vars,
                         selected=False,
                         status=status,
                         manufacturer=mfr,
                         profiler_type=profiler_code if profiler_code else None,
+                        network=_derive_marker_network(marker_vars),
+                        wmo_id=fid,
+                        region_tag=_marker_region_tag(lat_val, lon_val),
                     )
                 )
                 float_summaries.append(f"• Float {fid}: {dist:.1f} km away (Status: {status}, Last report: {last_date or 'N/A'})")
@@ -123,6 +129,9 @@ def execute_radius_search(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
                                 variables=[],
                                 selected=False,
                                 status=status,
+                                network=_derive_marker_network([]),
+                                wmo_id=fid,
+                                region_tag=_marker_region_tag(lat_val, lon_val),
                             )
                         )
                     msg = f"Found {len(map_data)} float(s) in {intent.region.replace('_',' ').title()} region."
@@ -199,6 +208,7 @@ def execute_radius_search(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
 
             profiler_code = str(row.get("profiler_type", "")).strip()
             mfr = _resolve_manufacturer(profiler_code)
+            marker_vars = [s.strip() for s in sensors.split(",") if s.strip()] if sensors else []
 
             map_data.append(
                 MapData(
@@ -207,11 +217,14 @@ def execute_radius_search(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
                     longitude=lon_val,
                     profile_date=last_date if last_date else None,
                     dac=str(row.get("institution", "")),
-                    variables=[s.strip() for s in sensors.split(",") if s.strip()] if sensors else [],
+                    variables=marker_vars,
                     selected=False,
                     status=status,
                     manufacturer=mfr,
                     profiler_type=profiler_code if profiler_code else None,
+                    network=_derive_marker_network(marker_vars),
+                    wmo_id=fid,
+                    region_tag=_marker_region_tag(lat_val, lon_val),
                 )
             )
 

@@ -15,7 +15,11 @@ import pandas as pd
 
 from floatchat.config import settings
 from floatchat.models import ChatResponse, MapData, ParsedIntent, SearchCriteria
-from floatchat.query_engine.helpers import _resolve_manufacturer
+from floatchat.query_engine.helpers import (
+    _derive_marker_network,
+    _marker_region_tag,
+    _resolve_manufacturer,
+)
 
 if TYPE_CHECKING:
     from floatchat.query_engine.dispatch import ExecutionDeps
@@ -169,6 +173,9 @@ def execute_metadata_lookup(deps: ExecutionDeps, intent: ParsedIntent, pipeline_
 
     map_data = []
     if info.get("last_lat") is not None and info.get("last_lon") is not None:
+        # Sprint 1 (Bug 5): carry region_tag/network/wmo_id like every other
+        # marker family, so active sidebar filters cannot drop this marker.
+        marker_vars = info.get("sensors", [])
         map_data.append(
             MapData(
                 float_id=str(float_id),
@@ -176,9 +183,12 @@ def execute_metadata_lookup(deps: ExecutionDeps, intent: ParsedIntent, pipeline_
                 longitude=float(info["last_lon"]),
                 profile_date=info.get("last_report_date"),
                 dac=info.get("institution", "unknown"),
-                variables=info.get("sensors", []),
+                variables=marker_vars,
                 selected=True,
                 status=info.get("status", "unknown"),
+                network=_derive_marker_network(marker_vars),
+                wmo_id=str(float_id),
+                region_tag=_marker_region_tag(float(info["last_lat"]), float(info["last_lon"])),
             )
         )
 

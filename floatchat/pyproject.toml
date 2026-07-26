@@ -27,6 +27,13 @@ dependencies = [
     # import with a difflib shim, so behavior differed by environment. The
     # test suite assumes rapidfuzz semantics, so it is now a hard dependency.
     "rapidfuzz>=3.0.0",
+    # Required by duckdb-python when converting TIMESTAMPTZ (timezone-aware
+    # timestamps) to Python datetimes. Phase-2 parquet stores tz-aware profile
+    # dates, so aggregate queries returning MIN/MAX(date) raised
+    # ModuleNotFoundError: pytz in environments where it was absent — the
+    # exception was swallowed by broad except handlers and surfaced as zero
+    # counts (Bug Fix Sprint 1, Bug 6).
+    "pytz>=2024.1",
 ]
 
 [project.optional-dependencies]

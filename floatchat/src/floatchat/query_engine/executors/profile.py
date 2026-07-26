@@ -20,7 +20,7 @@ import pandas as pd
 
 from floatchat.config import settings
 from floatchat.exceptions import FloatChatError
-from floatchat.models import ChatResponse, ParsedIntent
+from floatchat.models import ChatResponse, MapData, ParsedIntent
 from floatchat.query_engine import response_builder
 from floatchat.query_engine.executors.legacy import execute_via_legacy_gdac
 from floatchat.query_engine.helpers import _figure_metrics
@@ -236,6 +236,45 @@ def execute_data_query_via_lake(
     map_data = response_builder._build_map_data_from_lake(lake, df)
     logger.info("Map markers from filtered data: %d markers", len(map_data))
 
+    # Sprint 1 (Bug 4): region_search is a discovery query — the DataFrame is
+    # profile-capped (data_lake_max_profiles, default 100) so the figure stays
+    # plottable, but the map must show EVERY matching float ("The backend
+    # should return every matching float"). Union the uncapped lake marker set
+    # (`get_map_markers` has no profile limit) with the df-derived markers so
+    # floats beyond the profile cap still appear on the map. Enrichment is
+    # best-effort: a failure here must never fail the query itself.
+    if intent.intent == "region_search" and hasattr(lake, "get_map_markers"):
+        try:
+            covered = {m.float_id for m in map_data}
+            for marker in lake.get_map_markers(criteria):
+                fid = str(marker.get("float_id", ""))
+                if not fid or fid in covered:
+                    continue
+                covered.add(fid)
+                lat_v = marker.get("lat")
+                lon_v = marker.get("lon")
+                p_date = marker.get("profile_date")
+                map_data.append(
+                    MapData(
+                        float_id=fid,
+                        latitude=float(lat_v) if lat_v is not None else None,
+                        longitude=float(lon_v) if lon_v is not None else None,
+                        profile_date=str(p_date)[:10] if p_date else None,
+                        dac=str(marker.get("dac", "")),
+                        variables=[],
+                        selected=False,
+                        status="unknown",
+                        network=None,
+                        wmo_id=fid,
+                        region_tag=intent.region,
+                    )
+                )
+            logger.info(
+                "Region-search map markers after union: %d markers", len(map_data)
+            )
+        except Exception as exc:
+            logger.warning("Region-search marker union failed: %s", exc)
+
     # --- Visualization --- #
     t_viz_t0 = time.perf_counter()
     try:
@@ -326,11 +365,43 @@ def execute_data_query_via_lake(
     if selected_float_id is None and "float_id" in df.columns and not df.empty:
         selected_float_id = str(df["float_id"].iloc[0])
     float_text = f" for Float {selected_float_id}" if selected_float_id else ""
+    missing_text = ""
+    # Sprint 1 (Bug 7): a comparison must name every float actually compared —
+    # not just the primary float_id, which made one-float results read as a
+    # single-float profile. Also disclose requested floats that returned no
+    # data so "compare A and B" can never silently degrade to only A.
+    if (
+        intent.intent in ("comparison", "comparison_plot")
+        and len(intent.comparison_float_ids) >= 2
+        and "float_id" in df.columns
+    ):
+        returned_ids = sorted(df["float_id"].astype(str).unique())
+        if returned_ids:
+            float_text = f" for Floats {', '.join(returned_ids)}"
+        missing_ids = [f for f in intent.comparison_float_ids if f not in set(returned_ids)]
+        if missing_ids:
+            missing_text = (
+                f" No matching"
+                f"{' ' + ', '.join(intent.variables) if intent.variables else ''}"
+                f" data was found for: {', '.join(missing_ids)}."
+            )
     date_text = f" collected on {profile_date}" if profile_date else ""
-    base_message = (
-        f"Showing {', '.join(intent.variables) or 'the requested variables'} "
-        f"profile{float_text}, {cycle_text}{date_text}."
-    )
+    if intent.intent == "region_search" and lake_result.unique_floats > 1:
+        # Sprint 1 (Bug 4): a region discovery response must describe the
+        # whole match set — naming a single float read as if the query had
+        # collapsed to one float. The "latest profile" reduction only applies
+        # when explicitly requested (profile_number / single-float queries).
+        region_label = (intent.region or "the requested region").replace("_", " ").title()
+        base_message = (
+            f"Showing {', '.join(intent.variables) or 'the requested variables'} "
+            f"profiles for {lake_result.unique_floats} floats in {region_label} "
+            f"({lake_result.unique_profiles} profiles total).{missing_text}"
+        )
+    else:
+        base_message = (
+            f"Showing {', '.join(intent.variables) or 'the requested variables'} "
+            f"profile{float_text}, {cycle_text}{date_text}.{missing_text}"
+        )
     if lake_result.unique_profiles > 1:
         base_message += " Additional profile history is available for comparison."
     final_message = base_message + "\n\n" + explanation

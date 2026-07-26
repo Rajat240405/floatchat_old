@@ -180,6 +180,47 @@ _INTENT_COUNT = re.compile(
     re.IGNORECASE,
 )
 
+# Sprint 1 (Bug 2): float *capability* questions — "What plots are available
+# for float 2903467?" — require explicit "available" adjacent to "plot(s)" so
+# generic plot requests ("show plot …") are NOT captured.
+_AVAILABLE_PLOTS_RE = re.compile(
+    r"\bplots?\s+(?:are\s+)?available\b|\bavailable\s+plots?\b",
+    re.IGNORECASE,
+)
+
+
+def is_available_plots_query(text: str) -> bool:
+    """Return True when *text* asks which plots can be produced for a float.
+
+    Capability questions (``What plots are available for float X?``) belong to
+    the metadata pipeline, not the profile pipeline: no figure is rendered,
+    the deterministic capability listing is returned instead. Exported so the
+    API layer can intercept this phrasing deterministically.
+    """
+    return _AVAILABLE_PLOTS_RE.search(text) is not None
+
+
+# Sprint 1 (Bug 1): float *information* phrasing — "Tell me about float X" /
+# "Show float X". No visualization keyword may be present, otherwise the user
+# explicitly named a plot type and the default routing must be kept.
+_TELL_ME_ABOUT_RE = re.compile(r"\btell\s+me\s+about\b", re.IGNORECASE)
+_SHOW_FLOAT_RE = re.compile(
+    r"\b(?:show|display|describe|give)\s+(?:me\s+)?float\b", re.IGNORECASE
+)
+_VIZ_KEYWORD_RE = re.compile(
+    r"\b(?:profiles?|plots?|graphs?|charts?|trajectory|hovm[öo]ller|"
+    r"time\s*series|timeseries|t\.?s\s+diagram|maps?)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_float_info_request(text: str) -> bool:
+    """True when *text* is a float-information request (``tell me about float
+    X`` / ``show float X``) that names no visualization type."""
+    if _VIZ_KEYWORD_RE.search(text):
+        return False
+    return bool(_TELL_ME_ABOUT_RE.search(text) or _SHOW_FLOAT_RE.search(text))
+
 # --------------------------------------------------------------------------- #
 # Phase 5 Part D: Place-name extraction pattern
 # --------------------------------------------------------------------------- #
@@ -390,6 +431,27 @@ class RegexIntentParser(AbstractIntentParser):
                 )
                 intent = "profile_plot"
 
+        # Sprint 1 (Bug 1): "Tell me about float 1902190" / "Show float X" are
+        # float-information requests — the linguistic classifier has no
+        # keyword for them and they fall through to the profile_plot default,
+        # producing a plot instead of the metadata card. Reroute to
+        # metadata_lookup. Guards keep measurement/visualization requests on
+        # the profile pipeline:
+        #   - variables extracted     -> measurement query ("tell me about
+        #     oxygen of float X")
+        #   - visualization keyword   -> user named a plot type; keep default
+        if (
+            intent == "profile_plot"
+            and float_id
+            and not variables
+            and _is_float_info_request(text)
+        ):
+            logger.info(
+                "Routing override: profile_plot -> metadata_lookup "
+                "(float information request)"
+            )
+            intent = "metadata_lookup"
+
         # Default radius for radius search if not specified (Phase 5: 500km)
         if intent == "radius_search" and radius_km is None:
             radius_km = 500.0
@@ -543,6 +605,11 @@ class RegexIntentParser(AbstractIntentParser):
         lon: float | None = None,
         radius_km: float | None = None,
     ) -> str:
+        # Sprint 1 (Bug 2): capability questions ("what plots are available
+        # for float X?") are metadata requests — the engine must return the
+        # float's information, never render a plot.
+        if is_available_plots_query(text):
+            return "metadata_lookup"
         # Priority 2: Metadata keywords ALWAYS route to metadata_lookup,
         # even without an explicit float_id. The float_id will be inherited
         # from context via reference phrase detection in merge_context.
@@ -567,10 +634,17 @@ class RegexIntentParser(AbstractIntentParser):
         if _INTENT_COUNT.search(text):
             return "count_aggregate"
         if (
-            (RegexIntentParser._extract_region(text) or _INTENT_REGION_SEARCH.search(text))
-            and not _INTENT_PROFILE.search(text)
+            RegexIntentParser._extract_region(text) or _INTENT_REGION_SEARCH.search(text)
         ):
-            return "region_search"
+            profile_hint = _INTENT_PROFILE.search(text) is not None
+            # Sprint 1 (Bug 4): plural "profiles" over a region is a discovery
+            # request — the user wants every matching float in the region, not
+            # one float's profile plot. Singular "profile"/"plot" phrasing
+            # keeps the legacy profile_plot routing. An explicit float_id
+            # keeps float-scoped queries on the profile pipeline.
+            plural_profiles = bool(re.search(r"\bprofiles\b", text, re.IGNORECASE))
+            if not profile_hint or (plural_profiles and float_id is None):
+                return "region_search"
         if _INTENT_PROFILE.search(text):
             return "profile_plot"
         return "profile_plot"
@@ -834,7 +908,18 @@ class RegexIntentParser(AbstractIntentParser):
         #   "sensors on 5907180"
         #   "trajectory of 7901128"
         #   "show trajectory 7901128"
-        if _INTENT_METADATA.search(text) or _INTENT_TRAJ.search(text):
+        # Sprint 1 (Bug 3): profile/plot phrasing with a bare 7-digit WMO id —
+        #   "Show oxygen profile for 4902623"
+        # Previously the number was ignored and the query ran globally,
+        # returning an arbitrary float's data. Profile/plot keywords are
+        # sufficient evidence that a bare 7-digit run is a float identifier
+        # (years are 4 digits; cycle numbers are labelled and < 7 digits), and
+        # explicit float ids must always take precedence.
+        if (
+            _INTENT_METADATA.search(text)
+            or _INTENT_TRAJ.search(text)
+            or _INTENT_PROFILE.search(text)
+        ):
             match = _BARE_FLOAT_RE.search(text)
             if match:
                 return match.group(1)
