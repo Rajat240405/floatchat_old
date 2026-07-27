@@ -92,7 +92,9 @@ def _check_critical_fields(intent: ParsedIntent, has_context: bool) -> str | Non
       - Data queries (profile_plot, region_search, etc.): need variables + spatial scope
       - Float discovery (radius_search, nearest_float): need location, NOT variables
       - Metadata/trajectory: need float_id
-      - Count: need region or location
+      - Count: need region, location, float, or temporal scope
+        (Sprint 1 Bug 2; Sprint 4 — a float is a valid counting scope:
+        "How many profiles does float 5906969 have?")
 
     Returns None when the intent has everything it needs.
     """
@@ -116,7 +118,27 @@ def _check_critical_fields(intent: ParsedIntent, has_context: bool) -> str | Non
         return None
 
     if intent.intent == "count_aggregate":
-        if not intent.region and intent.lat is None and not has_context:
+        # Sprint 1 (Bug 2): a resolved temporal scope (exact year or an
+        # open-ended date window) is a valid counting scope — "floats
+        # deployed after 2023" must execute (the executor labels the
+        # whole-lake scope "India Region"), not bounce back as a region
+        # clarification.
+        has_temporal_scope = (
+            intent.year is not None
+            or bool(intent.temporal_date_start)
+            or bool(intent.temporal_date_end)
+        )
+        # Sprint 4: a float id is a complete counting scope on its own —
+        # "How many profiles does float 5906969 have?" must execute (the
+        # count executor already handles float-scoped counts), not bounce
+        # back asking "Which region?".
+        if (
+            not intent.region
+            and intent.lat is None
+            and not intent.float_id
+            and not has_temporal_scope
+            and not has_context
+        ):
             return (
                 "Which region? Try 'how many floats in Arabian Sea' "
                 "or 'is there oxygen data near Mumbai'."
@@ -673,6 +695,10 @@ def handle_chat(
                 context_resolutions=getattr(outcome, "context_resolutions", ()) if outcome else (),
                 reasoning_rule=getattr(outcome, "reasoning_rule", None) if outcome else None,
                 reasoning_resolutions=getattr(outcome, "reasoning_resolutions", ()) if outcome else (),
+                # Sprint 1 (Bugs 1/4): lets the layer match count wording to
+                # the entity the scientist asked about; wording only, never
+                # computation.
+                user_message=request.message,
             )
         conversation_manager.update_context(request.session_id, intent, response)
         _log_response(response, request_t0)

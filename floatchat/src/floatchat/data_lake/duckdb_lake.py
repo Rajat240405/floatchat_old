@@ -1374,15 +1374,29 @@ class DuckDBDataLake(AbstractDataLake):
         float_id: str | None = None,
         variables: list[str] | None = None,
         months: list[int] | None = None,
+        date_start: str | None = None,
+        date_end: str | None = None,
     ) -> dict[str, Any]:
         """Query count/existence statistics for given search filters.
 
         P3 #3: ``months`` (season window, e.g. [6,7,8,9] for monsoon) takes
         precedence over ``month`` when filtering.
+
+        Sprint 1 (Bug 2): ``date_start``/``date_end`` (ISO "YYYY-MM-DD") are
+        optional open-ended bounds on the profile date. When both are None
+        (all pre-Sprint-1 callers) the generated SQL is byte-identical to
+        before. When a bound is present, the month-granular
+        ``region_month_stats`` fast path is skipped — it cannot express
+        day-precise bounds — and the ``date >= ?`` / ``date <= ?``
+        predicates run against the profile index / levels parquet instead.
         """
         conn = self._get_connection()
 
         rms_root = self._phase2_root / "parquet" / "region_month_stats" if self._phase2_root else None
+        # Sprint 1 (Bug 2): day-precise bounds cannot use the month-granular
+        # fast path — force the profile-index/levels path below.
+        if date_start or date_end:
+            rms_root = None
 
         # Sprint 1 (Bug 6): verify the region_month_stats schema BEFORE using
         # the fast path. Lakes built by older/parallel ETL versions may store
@@ -1487,6 +1501,12 @@ class DuckDBDataLake(AbstractDataLake):
             cond, mvals = _mf
             parts.append(cond)
             params.extend(mvals)
+        if date_start:
+            parts.append("date >= ?")
+            params.append(str(date_start))
+        if date_end:
+            parts.append("date <= ?")
+            params.append(str(date_end))
         if float_id:
             parts.append("CAST(float_id AS VARCHAR) = ?")
             params.append(str(float_id))
@@ -1526,6 +1546,109 @@ class DuckDBDataLake(AbstractDataLake):
         except Exception as exc:
             logger.warning("profile_index count query failed: %s", exc)
             return {"total_profiles": 0, "total_floats": 0, "has_data": False}
+
+    def query_matching_floats(
+        self,
+        region: str | None = None,
+        year: int | None = None,
+        month: int | None = None,
+        float_id: str | None = None,
+        variables: list[str] | None = None,
+        months: list[int] | None = None,
+        date_start: str | None = None,
+        date_end: str | None = None,
+        limit: int = 500,
+    ) -> pd.DataFrame:
+        """Sprint 2 (Visualization Contract): the float SET behind a filter.
+
+        One row per matching float — its latest in-filter profile position
+        (``lat``/``lon`` at its max ``date``), its matched profile count, and
+        its DAC — so an execution that *identifies* floats can also expose
+        them for the map. The predicate set and data-path fallbacks mirror
+        ``query_count_aggregate`` exactly (region / year / month window /
+        float / variable-presence / open-ended date bounds; profile_index →
+        lake-root levels fallback), which is what guarantees text and map
+        describe the same set. Column names are normalised to
+        ``float_id, lat, lon, last_profile_date, matched_profiles, dac``
+        regardless of source layout.
+
+        Ordering is deterministic (``ORDER BY float_id``) and the row count
+        is bounded by ``limit`` (the established 500-row marker-family cap).
+        Returns an empty DataFrame when nothing matches or no lake exists.
+        """
+        # Data-path selection mirrors query_count_aggregate.
+        use_levels_for_vars = bool(variables)
+        if use_levels_for_vars:
+            if self._phase2_root and (self._phase2_root / "parquet" / "levels").exists():
+                data_path = (self._phase2_root / "parquet" / "levels" / "**" / "*.parquet").as_posix()
+            elif self._lake_root.exists():
+                data_path = (self._lake_root / "**" / "*.parquet").as_posix()
+            else:
+                data_path = None
+        else:
+            if self._phase2_root and (self._phase2_root / "parquet" / "profile_index").exists():
+                data_path = (self._phase2_root / "parquet" / "profile_index" / "**" / "*.parquet").as_posix()
+            elif self._lake_root.exists():
+                data_path = (self._lake_root / "**" / "*.parquet").as_posix()
+            else:
+                data_path = None
+
+        if not data_path:
+            return pd.DataFrame()
+
+        # Column names differ between the phase2 profile_index layout and
+        # the lake-root levels layout (same convention as query_radius_search).
+        is_index = "profile_index" in str(data_path)
+        lat_col = "latitude" if is_index else "lat"
+        lon_col = "longitude" if is_index else "lon"
+
+        parts: list[str] = []
+        params: list[Any] = []
+        if region:
+            parts.append("region_tag = ?")
+            params.append(region)
+        if year is not None:
+            parts.append("year = ?")
+            params.append(year)
+        _mf = _month_filter(month, months)
+        if _mf is not None:
+            cond, mvals = _mf
+            parts.append(cond)
+            params.extend(mvals)
+        if date_start:
+            parts.append("date >= ?")
+            params.append(str(date_start))
+        if date_end:
+            parts.append("date <= ?")
+            params.append(str(date_end))
+        if float_id:
+            parts.append("CAST(float_id AS VARCHAR) = ?")
+            params.append(str(float_id))
+        if variables and use_levels_for_vars:
+            for v in variables:
+                parts.append(_variable_presence_filter(v))
+
+        where = " AND ".join(parts) if parts else "1=1"
+        sql = f"""
+        SELECT
+            CAST(float_id AS VARCHAR) AS float_id,
+            COUNT(DISTINCT CAST(cycle_number AS VARCHAR)) AS matched_profiles,
+            MAX(date) AS last_profile_date,
+            arg_max({lat_col}, date) AS lat,
+            arg_max({lon_col}, date) AS lon,
+            any_value(dac) AS dac
+        FROM read_parquet('{data_path}', hive_partitioning=true)
+        WHERE {where}
+        GROUP BY float_id
+        ORDER BY float_id
+        LIMIT {int(limit)}
+        """
+        try:
+            conn = self._get_connection()
+            return conn.execute(sql, params).fetchdf()
+        except Exception as exc:
+            logger.warning("matching-floats query failed: %s", exc)
+            return pd.DataFrame()
 
 
 def build_region_tag(lat: float, lon: float) -> str | None:

@@ -211,7 +211,27 @@ def _coverage_bullet(summary: dict[str, Any]) -> str | None:
     return text + "."
 
 
-def _metadata_bullets(summary: dict[str, Any]) -> list[str]:
+#: Metadata payload spellings that mean "no information" — never rendered
+#: as if they were facts (Sprint 4: "unknown" values are suppressed).
+_METADATA_UNKNOWN = {"", "unknown", "n/a", "none", "null"}
+
+
+def _metadata_bullets(summary: dict[str, Any], focus: str | None = None) -> list[str]:
+    """The broad metadata card's fact bullets.
+
+    Sprint 4:
+
+    * a *focused* metadata answer carries its single fact (and at most one
+      secondary fact) in the narration — the full card would only repeat
+      it, so no bullets are produced here;
+    * values that are missing, 0, or the literal placeholder "unknown" are
+      omitted instead of being presented as facts;
+    * the position bullet reads the executor's real keys ``last_lat`` /
+      ``last_lon`` (the previous ``latitude``/``longitude`` keys do not
+      exist in the payload, so the bullet never rendered in production).
+    """
+    if focus and focus != "metadata_summary":
+        return []
     info = summary.get("float_info") or {}
     bullets: list[str] = []
     fields = [
@@ -222,19 +242,32 @@ def _metadata_bullets(summary: dict[str, Any]) -> list[str]:
     ]
     for key, render in fields:
         value = info.get(key)
-        if value not in (None, "", 0):
-            bullets.append(render(value))
-    lat, lon = info.get("latitude"), info.get("longitude")
+        if value is None or value == 0:
+            continue
+        if str(value).strip().lower() in _METADATA_UNKNOWN:
+            continue
+        bullets.append(render(value))
+    lat, lon = info.get("last_lat"), info.get("last_lon")
     if _is_num(lat) and _is_num(lon):
         bullets.append(f"Last known position: ({_fmt(float(lat), 2)}, {_fmt(float(lon), 2)}).")
-    return bullets[:4]
+    return bullets[:5]
 
 
 # --------------------------------------------------------------------- #
 # Public entry point                                                     #
 # --------------------------------------------------------------------- #
-def summarize(response: Any, intent: ParsedIntent, original_message: str) -> list[str]:
-    """Ordered summary bullets: engine interpretation → computed → coverage."""
+def summarize(
+    response: Any,
+    intent: ParsedIntent,
+    original_message: str,
+    metadata_focus: str | None = None,
+) -> list[str]:
+    """Ordered summary bullets: engine interpretation → computed → coverage.
+
+    ``metadata_focus`` (Sprint 4) is forwarded to the metadata card builder:
+    a focused metadata answer states its fact in the narration and drops
+    the full card to honour "every fact appears once".
+    """
     summary = getattr(response, "data_summary", None) or {}
     bullets: list[str] = engine_interpretation(original_message)
 
@@ -251,7 +284,7 @@ def summarize(response: Any, intent: ParsedIntent, original_message: str) -> lis
         if coverage:
             bullets.append(coverage)
     elif intent.intent == "metadata_lookup":
-        bullets += _metadata_bullets(summary)
+        bullets += _metadata_bullets(summary, metadata_focus)
     elif intent.intent in ("nearest_float", "radius_search"):
         coverage = _coverage_bullet(summary)
         if not coverage:
@@ -266,14 +299,16 @@ def summarize(response: Any, intent: ParsedIntent, original_message: str) -> lis
         if coverage and intent.intent != "count_aggregate":
             bullets.append(coverage)
 
-    # De-duplicate while preserving order; never overwhelm (cap 4).
+    # De-duplicate while preserving order; never overwhelm. Cap 5: only the
+    # broad metadata card can legitimately exceed 4 (status, DAC, network,
+    # profiles, position) now that its position bullet renders (Sprint 4).
     seen: set[str] = set()
     unique: list[str] = []
     for b in bullets:
         if b and b not in seen:
             seen.add(b)
             unique.append(b)
-    return unique[:4]
+    return unique[:5]
 
 
 # --------------------------------------------------------------------- #

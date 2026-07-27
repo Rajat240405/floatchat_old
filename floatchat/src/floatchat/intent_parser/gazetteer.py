@@ -326,3 +326,22 @@ def resolve_place_name(place_name: str) -> dict[str, Any] | None:
 def get_gazetteer_entries() -> list[str]:
     """Return all place names in the local gazetteer (for testing/debugging)."""
     return sorted(_LOCAL_GAZETTEER.keys())
+
+
+def reverse_place_name(lat: float | None, lon: float | None) -> str | None:
+    """Reverse lookup: coordinates → gazetteer place name (static table only).
+
+    Post-architecture Sprint 1 (Bug 5): lets response composition refer to a
+    place the way the user did ("Goa") instead of raw coordinates — but ONLY
+    when the coordinates match a local-table entry exactly (both rounded to 2
+    decimals, the precision the table is written at). No fuzzy matching and
+    no live geocoding here: if the point did not provably come from this
+    table, the honest answer is ``None`` (callers fall back to coordinates).
+    """
+    if lat is None or lon is None:
+        return None
+    key = (round(float(lat), 2), round(float(lon), 2))
+    for name, entry in _LOCAL_GAZETTEER.items():
+        if (round(float(entry["lat"]), 2), round(float(entry["lon"]), 2)) == key:
+            return name.title()
+    return None

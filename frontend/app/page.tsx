@@ -129,6 +129,8 @@ export default function HomePage() {
     [lastAssistantMessage]
   );
   const radiusKm = lastAssistantMessage?.summary?.radius_km ?? null;
+  // Sprint 5 (Bug 6): named-region scope → the map frames the region itself.
+  const regionBounds = lastAssistantMessage?.summary?.region_bounds ?? null;
 
   // View Trajectory — only draws path when user clicks the button
   const handleViewTrajectory = useCallback(() => {
@@ -285,6 +287,7 @@ export default function HomePage() {
             onDrillDown={(q) => sendMessage(q)}
             radiusCenter={radiusCenter}
             radiusKm={radiusKm}
+            regionBounds={regionBounds}
             focusMode={isFloatFocusMode}
             trajectoryVisible={trajectoryVisible}
             highlightedCycle={highlightCycle}

@@ -416,7 +416,12 @@ class _DecisionBuilder:
         if not keep_coords:
             lat = lon = radius = None
 
-        if default_radius and radius is None:
+        # Sprint 5 (Bugs 1/2/3): a NAMED-REGION discovery is region geometry,
+        # not point+radius — never assign the default radius (and never
+        # record the "defaulting to 500 km" resolution) when a named region
+        # scopes the search. The default remains for point-geometry searches
+        # whose radius is neither explicit nor gazetteer-derived.
+        if default_radius and radius is None and region is None:
             radius = _RADIUS_SEARCH_DEFAULT_KM
             self.resolutions.append(
                 f"radius_search without an explicit radius: defaulting to {_RADIUS_SEARCH_DEFAULT_KM:.0f} km (established default)"

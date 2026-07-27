@@ -37,12 +37,16 @@ _SCHEMA_LINES = (
     ('"place_mentions"', 'coastal or city place mentions (e.g. "Goa", "near Mumbai")'),
     ('"float_ids"', "5-9 digit Argo float WMO identifiers, digits only"),
     ('"profile_number"', "explicit profile/cycle number — omit if none"),
-    ('"temporal"', '{"year": int, "month": int, "season": string, "date_start": string, "date_end": string} — include only the parts actually present; omit the whole object if no temporal expression'),
+    ('"temporal"', '{"year": int, "month": int, "season": string, "date_start": string (ISO "YYYY-MM-DD"), "date_end": string (ISO "YYYY-MM-DD")} — include only the parts actually present; omit the whole object if no temporal expression. Use "year" ONLY for a single calendar year ("in 2023"); open-ended or bounded ranges MUST use date_start/date_end — see RULES'),
     ('"depth"', '{"min": float, "max": float} — depth/pressure bounds; omit if none'),
     ('"spatial"', '{"lat": float, "lon": float, "radius_km": float} — explicit coordinates only; omit if none'),
     ('"comparison"', '{"is_comparison": bool, "float_ids": [...], "region_mentions": [...]} — omit if not a comparison'),
     ('"concept_mentions"', 'Argo/science concepts mentioned (e.g. "parking depth", "BGC float")'),
-    ('"operational_filter"', '"alive" when the user wants only currently-active floats — omit otherwise'),
+    # Sprint 3 (Bug 2): name the full alive word class so weak models map it
+    # exactly the way the deterministic parser does (identical filter on both
+    # parsing paths). "deployed" is NOT in this class (it means presence in
+    # the lake, not currently-reporting status).
+    ('"operational_filter"', '"alive" when the user narrows to currently active/operating floats ("active", "operating", "alive") — omit otherwise'),
     ('"existence_check"', "true for 'is there / are there any' questions"),
     ('"follow_up_reference"', "true when the message refers to the previous turn (\"that float\", \"same region\", \"what about 2023\")"),
     ('"requires_clarification"', "true when you cannot resolve something essential and must ask instead of guessing"),
@@ -68,6 +72,28 @@ _RULES = (
     "question. Never guess a value you are unsure about.",
     "- intent_name must come from the intent vocabulary. If nothing fits, "
     "use \"unknown\" with a low confidence rather than inventing an intent.",
+    # Post-architecture Sprint 1 (Bug 2): open-ended temporal meaning was
+    # being lost ("after 2023" collapsed to nothing). The contract already
+    # carries ISO bounds; this rule teaches the mapping. "after 2023" is NOT
+    # "year = 2023" — an open constraint must stay open.
+    "- Temporal qualifiers map to ISO date bounds, never to 'year': "
+    "\"after 2023\" → {\"date_start\": \"2024-01-01\"}; "
+    "\"before 2023\" → {\"date_end\": \"2022-12-31\"}; "
+    "\"since 2023\" or \"from 2023\" → {\"date_start\": \"2023-01-01\"}; "
+    "\"until 2023\" → {\"date_end\": \"2023-12-31\"}; "
+    "\"between 2022 and 2024\" or \"from 2022 to 2024\" → "
+    "{\"date_start\": \"2022-01-01\", \"date_end\": \"2024-12-31\"}. "
+    "Use {\"year\": 2023} only when one whole calendar year is meant.",
+    # Post-architecture Sprint 3 (Bugs 1/3): discovery vs measurement must be
+    # chosen the same way the deterministic parser chooses it — the planner
+    # must never depend on whether this LLM call succeeded.
+    "- Float DISCOVERY vs MEASUREMENT: a request that asks which floats exist "
+    "in a scope (\"which floats...\", \"show/list/find floats...\", \"floats in "
+    "the Arabian Sea\") and names NO measurement variable is radius_search "
+    "(float discovery) — scope it with region_mentions or place_mentions; "
+    "coordinates are not required. profile_plot and region_search are "
+    "measurement requests: use them only when variables are mentioned or the "
+    "user explicitly asks for a plot/profile.",
 )
 
 
@@ -144,6 +170,17 @@ def build_system_prompt() -> str:
         '{"intent_name": "count_aggregate", "confidence": 0.7, '
         '"variable_mentions": ["oxygen"], "place_mentions": ["goa"], '
         '"temporal": {"season": "monsoon"}, "existence_check": true}',
+        # Sprint 1 (Bug 2): open-ended qualifier keeps its open meaning.
+        'User: "show floats deployed after 2023" -> {"intent_name": '
+        '"count_aggregate", "confidence": 0.9, "temporal": {"date_start": '
+        '"2024-01-01"}}',
+        # Sprint 3 (Bugs 1/2): region-scoped discovery + the alive word class.
+        'User: "which floats are currently active in the arabian sea" -> '
+        '{"intent_name": "radius_search", "confidence": 0.92, '
+        '"region_mentions": ["arabian sea"], "operational_filter": "alive"}',
+        'User: "how many floats are operating in the bay of bengal" -> '
+        '{"intent_name": "count_aggregate", "confidence": 0.93, '
+        '"region_mentions": ["bay of bengal"], "operational_filter": "alive"}',
         'User: "plot dissolved oxygen" -> {"intent_name": "profile_plot", '
         '"confidence": 0.85, "variable_mentions": ["dissolved oxygen"], '
         '"requires_clarification": true, "clarification_question": "Which '

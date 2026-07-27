@@ -592,8 +592,18 @@ class SemanticConverter:
             if resolved:
                 lat = float(resolved["lat"])
                 lon = float(resolved["lon"])
-                if radius is None:
-                    radius = float(resolved.get("radius_km", 100))
+                # Sprint 5 (Bug 1 — policy reversal of the Sprint-3 note that
+                # previously occupied this spot): a named place is point
+                # geometry WITH the gazetteer's documented radius (Goa →
+                # 100 km). When the request carries no explicit radius, the
+                # gazetteer radius is the place's semantics — it must not be
+                # replaced by the arbitrary 500 km default. The regex parser
+                # applies the identical rule at its gazetteer call site, so
+                # both parsing paths still produce identical ParsedIntents
+                # (Root Principle). The 500 km default remains, but only for
+                # raw-coordinate searches without any named place/region.
+                if radius is None and resolved.get("radius_km") is not None:
+                    radius = float(resolved["radius_km"])
             else:
                 place_unresolved = True
                 ambiguities.append(

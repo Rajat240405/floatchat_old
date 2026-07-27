@@ -143,3 +143,19 @@ class AbstractDataLake(ABC):
         This is a convenience wrapper that calls query() and extracts stats.
         """
         ...
+
+    def query_matching_floats(self, **kwargs: Any) -> Any:
+        """Sprint 2 (Visualization Contract): the float SET behind a filter.
+
+        One row per matching float (latest in-filter position, matched
+        profile count), mirroring ``query_count_aggregate``'s predicates and
+        data-path fallbacks. Distinct from ``get_map_markers`` (criteria-shaped,
+        used by the profile visualization pipeline): this is the
+        count-executor-shaped contract, including open-ended date bounds.
+
+        Non-abstract default ⇒ every implementation keeps working; lakes
+        that cannot answer return an empty DataFrame.
+        """
+        import pandas as pd
+
+        return pd.DataFrame()

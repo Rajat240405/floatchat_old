@@ -66,7 +66,7 @@ class Settings(BaseSettings):
 
     # Scientific Narrator – LLM-driven explanation (Phase 26+)
     sci_narrator_enabled: bool = True
-    sci_narrator_model: str = "qwen2.5:3b"
+    sci_narrator_model: str = "qwen2.5:7b"
     sci_narrator_temperature: float = 0.25
     sci_narrator_top_p: float = 0.9
     sci_narrator_timeout: float = 60.0
@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     # on your machine, e.g. E:\floatchat_data_lake\ on Windows or
     # /data/floatchat_lake on Linux. Expected subdirectories:
     #   raw/{core,bgc}/, parquet/{float_registry,profile_index,levels,region_month_stats}/
-    data_lake_dir: str = ""
+    data_lake_dir: str = "E:\\floatchat_data_lake\\"
     # If True, use the Phase 2 data lake for queries (overrides data_lake_root
     # Phase 1 path). Only takes effect when data_lake_dir is actually set and
     # populated; otherwise the Phase 1 path under data_lake_root is used.
@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     # Field names keep the historical `extractor_*` prefix for env-var
     # compatibility (FLOATCHAT_EXTRACTOR_MODEL etc.). Set extractor_model to
     # the empty string "" to disable the compiler entirely.
-    extractor_model: str = "qwen2.5:3b"  # P2: 0.5b hallucinated regions/vars; 3b is reliable
+    extractor_model: str = "qwen2.5:7b"  # P2: 0.5b hallucinated regions/vars; 3b is reliable
     extractor_timeout: float = 10.0  # seconds — generous timeout for small model
     extractor_max_retries: int = 1
     # Minimum confidence (0.0-1.0) from the LLM to accept its extraction.
@@ -166,7 +166,7 @@ class Settings(BaseSettings):
     semantic_understanding_enabled: bool = True
     # Empty string disables the layer even when the flag is on (mirrors the
     # extractor_model convention above).
-    semantic_model: str = "qwen2.5:3b"
+    semantic_model: str = "qwen2.5:7b"
     semantic_timeout: float = 15.0
     semantic_temperature: float = 0.0
     semantic_max_tokens: int = 768

@@ -22,6 +22,17 @@ interface MapPanelProps {
   highlightedCycle?: number | null;
   /** Called when user clicks a trajectory profile point. */
   onSelectTrajectoryPoint?: (cycleNumber: number | null) => void;
+  /**
+   * Sprint 5 (Bug 6): ontology bounding region of a named-region query.
+   * When present, the map zooms to the region itself instead of deriving the
+   * viewport from marker bounds (and never to an India-wide extent).
+   */
+  regionBounds?: {
+    lat_min: number;
+    lat_max: number;
+    lon_min: number;
+    lon_max: number;
+  } | null;
 }
 
 const MAP_STYLE: any = {
@@ -69,6 +80,59 @@ function buildRadiusGeoJSON(lat: number, lon: number, radiusKm: number) {
   };
 }
 
+/**
+ * Viewport zoom for a given lat/lon span (degrees). The radius-mode ladder is
+ * shared by the marker-fit auto-zoom and the Sprint-5 region-bounds zoom so
+ * both pick the same frame for the same geographic extent.
+ */
+function zoomForSpan(
+  maxSpan: number,
+  mode: { focus: boolean; singlePoint: boolean }
+): number {
+  if (mode.focus) {
+    if (mode.singlePoint || maxSpan < 0.02) return 6.5;
+    if (maxSpan < 0.5) return 7.5;
+    if (maxSpan < 2.0) return 6.5;
+    if (maxSpan < 5.0) return 5.8;
+    if (maxSpan < 12.0) return 5.0;
+    return 4.2;
+  }
+  if (mode.singlePoint || maxSpan < 0.02) return 7.5;
+  if (maxSpan < 0.1) return 10.0;
+  if (maxSpan < 0.5) return 8.5;
+  if (maxSpan < 2.0) return 7.0;
+  if (maxSpan < 5.0) return 6.0;
+  if (maxSpan < 12.0) return 5.0;
+  if (maxSpan < 25.0) return 4.2;
+  return 3.5;
+}
+
+/**
+ * Sprint 5 marker-status colour vocabulary (Arena-standardized legend).
+ * Exported so chat/workspace components paint the same colours off the map.
+ *   active   → blue            ("currently active")
+ *   drifted  → amber           (trajectory context)
+ *   inactive → slate grey      (stopped reporting)
+ *   dead     → red             (dead / retired)
+ *   unknown  → light slate     ("unknown" — no alive claim was made)
+ */
+export const MARKER_STATUS_COLORS: Record<string, string> = {
+  active: "#00d2ff",
+  drifted: "#ffa01e",
+  inactive: "#ff5050",
+  dead: "#ef4444",
+  unknown: "#94a3b8",
+};
+const DEFAULT_MARKER_COLOR = MARKER_STATUS_COLORS.unknown;
+
+/** Arena-standardized map legend (Sprint 5): static vocabulary reference. */
+const MAP_LEGEND: { key: string; label: string; color: string }[] = [
+  { key: "active", label: "Active", color: MARKER_STATUS_COLORS.active },
+  { key: "inactive", label: "Inactive", color: MARKER_STATUS_COLORS.inactive },
+  { key: "dead", label: "Dead / retired", color: MARKER_STATUS_COLORS.dead },
+  { key: "unknown", label: "Unknown", color: MARKER_STATUS_COLORS.unknown },
+];
+
 export function MapPanel({
   mapData,
   selectedFloat,
@@ -79,6 +143,7 @@ export function MapPanel({
   trajectoryVisible = false,
   highlightedCycle = null,
   onSelectTrajectoryPoint,
+  regionBounds = null,
 }: MapPanelProps) {
   const uniqueFloatIds = useMemo(
     () => new Set(mapData.map((m) => m.float_id).filter(Boolean)),
@@ -121,27 +186,31 @@ export function MapPanel({
     const centerLon = (minLon + maxLon) / 2;
     const spanLat = maxLat - minLat;
     const spanLon = maxLon - minLon;
-    const maxSpan = Math.max(spanLat, spanLon);
-
-    let zoom = 4.0;
-    if (focusMode || uniqueFloatIds.size === 1) {
-      if (pointCount === 1 || maxSpan < 0.02) zoom = 6.5;
-      else if (maxSpan < 0.5) zoom = 7.5;
-      else if (maxSpan < 2.0) zoom = 6.5;
-      else if (maxSpan < 5.0) zoom = 5.8;
-      else if (maxSpan < 12.0) zoom = 5.0;
-      else zoom = 4.2;
-    } else if (mapData.length === 1 || maxSpan < 0.02) zoom = 7.5;
-    else if (maxSpan < 0.1) zoom = 10.0;
-    else if (maxSpan < 0.5) zoom = 8.5;
-    else if (maxSpan < 2.0) zoom = 7.0;
-    else if (maxSpan < 5.0) zoom = 6.0;
-    else if (maxSpan < 12.0) zoom = 5.0;
-    else if (maxSpan < 25.0) zoom = 4.2;
-    else zoom = 3.5;
+    const zoom = zoomForSpan(Math.max(spanLat, spanLon), {
+      focus: focusMode || uniqueFloatIds.size === 1,
+      singlePoint: mapData.length === 1,
+    });
 
     setViewState({ longitude: centerLon, latitude: centerLat, zoom });
   }, [mapData, focusMode, trajectoryVisible, uniqueFloatIds.size, pointCount]);
+
+  // Sprint 5 (Bug 6): a named-region query zooms to the region itself, from
+  // the ontology bounding region carried by the execution summary — not to
+  // marker spans, and never to the India-wide fallback extent. Marker-fit
+  // is the fallback while a reply carries no region bounds.
+  useEffect(() => {
+    if (!regionBounds) return;
+    const { lat_min, lat_max, lon_min, lon_max } = regionBounds;
+    const zoom = zoomForSpan(
+      Math.max(lat_max - lat_min, lon_max - lon_min),
+      { focus: false, singlePoint: false }
+    );
+    setViewState({
+      longitude: (lon_min + lon_max) / 2,
+      latitude: (lat_min + lat_max) / 2,
+      zoom,
+    });
+  }, [regionBounds]);
 
   // Active popup: highlighted cycle point (trajectory) or selected float marker
   const activePoint = useMemo(() => {
@@ -280,12 +349,16 @@ export function MapPanel({
         "match",
         ["get", "status"],
         "active",
-        "#00d2ff",
+        MARKER_STATUS_COLORS.active,
         "drifted",
-        "#ffa01e",
+        MARKER_STATUS_COLORS.drifted,
         "inactive",
-        "#ff5050",
-        "#00d2ff",
+        MARKER_STATUS_COLORS.inactive,
+        "dead",
+        MARKER_STATUS_COLORS.dead,
+        "retired",
+        MARKER_STATUS_COLORS.dead,
+        MARKER_STATUS_COLORS.active,
       ] as any,
       "line-width": 2.5,
       "line-opacity": 0.85,
@@ -327,12 +400,16 @@ export function MapPanel({
         "match",
         ["get", "status"],
         "active",
-        "#00d2ff",
+        MARKER_STATUS_COLORS.active,
         "drifted",
-        "#ffa01e",
+        MARKER_STATUS_COLORS.drifted,
         "inactive",
-        "#ff5050",
-        "#94a3b8",
+        MARKER_STATUS_COLORS.inactive,
+        "dead",
+        MARKER_STATUS_COLORS.dead,
+        "retired",
+        MARKER_STATUS_COLORS.dead,
+        DEFAULT_MARKER_COLOR,
       ] as any,
       "circle-stroke-width": [
         "case",
@@ -427,8 +504,9 @@ export function MapPanel({
   const statusColorClass = (status?: string | null) => {
     if (status === "active") return "text-emerald-600";
     if (status === "drifted") return "text-amber-600";
-    if (status === "inactive") return "text-red-500";
-    return "text-slate-500";
+    if (status === "inactive") return "text-slate-600";
+    if (status === "dead" || status === "retired") return "text-red-500";
+    return "text-slate-400";
   };
 
   return (
@@ -491,6 +569,34 @@ export function MapPanel({
         onMouseLeave={onMouseLeave}
       >
         <NavigationControl position="bottom-right" />
+
+        {/* Sprint 5 (Arena-standardized legend): fixed map-legend reference
+            in the exact palette the layers paint. Purely presentational —
+            always visible, independent of per-request marker statuses. */}
+        <div className="absolute bottom-3 left-3 z-[400] px-3 py-2 bg-slate-900/90 backdrop-blur-md border border-slate-700/60 rounded-xl shadow-lg pointer-events-none">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">
+            Legend
+          </span>
+          <div className="flex flex-col gap-1">
+            {MAP_LEGEND.map((entry) => (
+              <span key={entry.key} className="flex items-center gap-2 text-[11px] text-slate-200">
+                <span
+                  className="w-2.5 h-2.5 rounded-full inline-block shrink-0 border border-white/70"
+                  style={{ backgroundColor: entry.color }}
+                />
+                {entry.label}
+              </span>
+            ))}
+            <span className="flex items-center gap-2 text-[11px] text-slate-200">
+              <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0 border-2 border-sky-400 bg-transparent" />
+              Selected float
+            </span>
+            <span className="flex items-center gap-2 text-[11px] text-slate-200">
+              <span className="inline-block w-4 h-[3px] rounded-sm bg-sky-700 shrink-0" />
+              Search radius
+            </span>
+          </div>
+        </div>
 
         {radiusGeoJSON && (
           <Source id="radius" type="geojson" data={radiusGeoJSON}>
@@ -648,7 +754,12 @@ export function MapPanel({
                         ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                         : activePoint.status === "drifted"
                           ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
-                          : "bg-slate-700/50 text-slate-400 border-slate-600/50"
+                          : activePoint.status === "dead" ||
+                              activePoint.status === "retired"
+                            ? "bg-red-500/10 text-red-400 border-red-500/30"
+                            : activePoint.status === "inactive"
+                              ? "bg-slate-500/10 text-slate-300 border-slate-500/30"
+                              : "bg-slate-700/50 text-slate-400 border-slate-600/50"
                     }`}
                   >
                     <span
@@ -657,7 +768,12 @@ export function MapPanel({
                           ? "bg-emerald-400 animate-pulse"
                           : activePoint.status === "drifted"
                             ? "bg-amber-400"
-                            : "bg-slate-500"
+                            : activePoint.status === "dead" ||
+                                activePoint.status === "retired"
+                              ? "bg-red-400"
+                              : activePoint.status === "inactive"
+                                ? "bg-slate-300"
+                                : "bg-slate-500"
                       }`}
                     />
                     {activePoint.status}

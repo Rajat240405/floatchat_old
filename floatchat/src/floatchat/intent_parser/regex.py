@@ -101,7 +101,7 @@ _INTENT_RADIUS = re.compile(
     re.IGNORECASE,
 )
 _INTENT_METADATA = re.compile(
-    r"\b(sensors?|metadata|status|last\s+report|first\s+report|first\s+profile|deployed|deployment|parking\s+depth|profiler|dac|institution|registry|owner|owns?|operated\s+by|managed\s+by|platform\s+(?:type|info|information)|info(?:rmation)?|details|manufacturer|battery)\b",
+    r"\b(sensors?|metadata|status|last\s+(?:report|seen|heard)|first\s+report|first\s+profile|deployed|deployment|parking\s+depth|profiler|dac|institution|registry|owner|owns?|operated\s+by|operates|operator|managed\s+by|platform\s+(?:type|info|information)|info(?:rmation)?|details|manufacturer|battery)\b",
     re.IGNORECASE,
 )
 _INTENT_COUNT = re.compile(
@@ -149,6 +149,47 @@ def _is_float_info_request(text: str) -> bool:
     if _VIZ_KEYWORD_RE.search(text):
         return False
     return bool(_TELL_ME_ABOUT_RE.search(text) or _SHOW_FLOAT_RE.search(text))
+
+
+# Sprint 3 (Bugs 1/3 — Intent Consistency): float-DISCOVERY language over a
+# named region. The user's objective is enumerating the floats in a scope
+# ("which floats…", "show floats…", "floats in the Arabian Sea"), never a
+# measurement plot. These phrases must reach the same canonical intent the
+# Semantic Reasoner selects for its discovery vocabulary ("radius_search" with
+# a region scope → planner ``find_floats``) — matched by language only;
+# variables and float scope are checked by the caller (routing override in
+# parse(), mirroring the established pattern that keeps _detect_intent a pure
+# linguistic classifier).
+_DISCOVERY_QUESTION_RE = re.compile(
+    r"\b(?:which|what)\s+(?:argo\s+|bgc\s+)?floats?\b", re.IGNORECASE
+)
+_DISCOVERY_VERB_RE = re.compile(
+    r"\b(?:show|list|find|display|give|get)\s+(?:me\s+)?"
+    r"(?:(?:all|any|the|these|those|active|alive|operating|operational|"
+    r"available|bgc|matching)\s+)*floats\b",
+    re.IGNORECASE,
+)
+_DISCOVERY_PLACEMENT_RE = re.compile(
+    r"\bfloats\s+(?:(?:currently|also|still|now|active|alive|operating|"
+    r"operational|deployed|available)\s+)*(?:in|inside|within|of)\s+(?:the\s+)?",
+    re.IGNORECASE,
+)
+
+
+def _is_discovery_language(text: str) -> bool:
+    """True when *text* asks to enumerate floats and names no visualization.
+
+    The visualization-keyword guard mirrors the user's own rule (Sprint 3,
+    Bug 3): a request that names a plot/profile/figure type is a
+    measurement/visualization request, not pure float discovery.
+    """
+    if _VIZ_KEYWORD_RE.search(text):
+        return False
+    return bool(
+        _DISCOVERY_QUESTION_RE.search(text)
+        or _DISCOVERY_VERB_RE.search(text)
+        or _DISCOVERY_PLACEMENT_RE.search(text)
+    )
 
 # --------------------------------------------------------------------------- #
 # Phase 5 Part D: Place-name extraction pattern
@@ -312,9 +353,15 @@ class RegexIntentParser(AbstractIntentParser):
                         if place_resolved:
                             lat = place_resolved["lat"]
                             lon = place_resolved["lon"]
+                            # Sprint 5 (Bug 1): a named place is point
+                            # geometry WITH a gazetteer radius (Goa → 100 km).
+                            # Use the gazetteer's radius when the user gave
+                            # none — never the arbitrary 500 km default.
+                            if radius_km is None and place_resolved.get("radius_km") is not None:
+                                radius_km = float(place_resolved["radius_km"])
                             logger.info(
-                                "Phase 5 gazetteer: '%s' resolved to (%s, %s) via %s",
-                                place_name, lat, lon, place_resolved.get("source"),
+                                "Phase 5 gazetteer: '%s' resolved to (%s, %s, r=%s) via %s",
+                                place_name, lat, lon, radius_km, place_resolved.get("source"),
                             )
                         else:
                             logger.warning(
@@ -329,6 +376,35 @@ class RegexIntentParser(AbstractIntentParser):
             lon=lon,
             radius_km=radius_km,
         )
+
+        # Sprint 3 (Bugs 1/3 — Intent Consistency): region-scoped float
+        # DISCOVERY override. "Which floats are active in the Arabian Sea?"
+        # classifies as region_search (a region, no plot keyword); "Show
+        # floats in the Arabian Sea" classifies as profile_plot (the verb
+        # "show" matches the profile hint). Both would enter the profile
+        # pipeline — but the user asked to ENUMERATE floats, not to plot
+        # measurements. Reroute to the discovery intent the Semantic Reasoner
+        # selects for the same request ("radius_search" region scope →
+        # planner filter_region/…→ find_floats), so both parsing paths
+        # produce the identical canonical ParsedIntent and plan (Root
+        # Principle). Guards mirror the user's plot-permission rule (Bug 3):
+        # variables or a named float scope keep the measurement pipeline, and
+        # visualization nouns ("profile", "plot", "map", …) already excluded
+        # the phrase inside _is_discovery_language — only verb-style phrasing
+        # ("show floats…", "which floats…") reaches the override.
+        if (
+            intent in ("region_search", "profile_plot")
+            and not variables
+            and not float_id
+            and region is not None
+            and _is_discovery_language(text)
+        ):
+            logger.info(
+                "Routing override: %s -> radius_search "
+                "(float-discovery language over a named region; no variables)",
+                intent,
+            )
+            intent = "radius_search"
 
         # Architectural decision: variables + spatial constraint = measurement
         # query, not float discovery. If the user asked for a specific variable
@@ -379,8 +455,17 @@ class RegexIntentParser(AbstractIntentParser):
             )
             intent = "metadata_lookup"
 
-        # Default radius for radius search if not specified (Phase 5: 500km)
-        if intent == "radius_search" and radius_km is None:
+        # Default radius for radius search if not specified (Phase 5: 500km).
+        # Sprint 5 (Bugs 1/3): a named-region scope is REGION geometry, not
+        # point+radius — do not invent a radius for it ("Which floats are
+        # active in the Arabian Sea?" must stay radius-free end to end).
+        # The default applies only to point-geometry searches that have no
+        # explicit radius and no gazetteer radius.
+        if (
+            intent == "radius_search"
+            and radius_km is None
+            and not (region is not None and lat is None)
+        ):
             radius_km = 500.0
 
         # Check for conversational follow-up indicators that signal intent
@@ -690,13 +775,27 @@ class RegexIntentParser(AbstractIntentParser):
         """Phase 6: Extract operational + float-class filters deterministically.
 
         Returns a filter string that the engine can use to narrow results:
-        - "alive" / "active" -> float has recent profiles
+        - "alive" / "active" / "operating" -> float has recent profiles
         - "inactive" -> float has no recent profiles
         - "bgc" -> BGC Argo float (has biogeochemical sensors)
         - "core" -> Core Argo float (CTD only)
         - "latest" / "newest" / "recent" -> sort by most recent (informational)
+
+        Sprint 3 (Bug 2 — Intent Consistency): the alive word class must be
+        identical on every parsing path — "active", "operating" and "alive"
+        all map to the same ``alive`` filter. "operating" was silently
+        dropped here while the semantic prompt mapped it to ``alive``, which
+        made the planner output depend on whether the semantic LLM succeeded.
+        Deliberately OUT of this class: "deployed" (presence in the lake —
+        Sprint 1 temporal queries — not currently-reporting status),
+        "operated by" / "who operates" (ownership — metadata keywords), hence
+        the explicit word list instead of a stem.
         """
-        if re.search(r"\b(?:alive|active|operational)\b", text, re.IGNORECASE):
+        if re.search(
+            r"\b(?:alive|active|operational|operating)\b",
+            text,
+            re.IGNORECASE,
+        ):
             return "alive"
         if re.search(r"\binactive\b", text, re.IGNORECASE):
             return "inactive"

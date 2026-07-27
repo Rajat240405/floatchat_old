@@ -8,12 +8,13 @@ injected local data lake via ``deps.lake`` (no GDAC HTTP calls).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
 from floatchat.config import settings
 from floatchat.models import ChatResponse, MapData, ParsedIntent
+from floatchat.ontology.regions import INDIA_QUERY_REGIONS, REGIONS
 from floatchat.query_engine.helpers import (
     _build_alive_window,
     _derive_marker_network,
@@ -26,6 +27,24 @@ if TYPE_CHECKING:
     from floatchat.query_engine.dispatch import ExecutionDeps
 
 logger = logging.getLogger(__name__)
+
+
+def _row_sensor_list(row: Any) -> list[str]:
+    """Best-effort sensor codes from a result row (Sprint 5, Bug 5).
+
+    Region-branch sources differ in layout (phase2 profile_index rows vs the
+    levels fallback): read whichever sensor/variables column exists so the
+    marker's network derivation uses real payload where available instead of
+    always defaulting to the Core-Argo colour.
+    """
+    raw = row.get("sensors", None)
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        raw = row.get("variables", None)
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [str(s).strip() for s in raw if str(s).strip()]
+    return [s.strip() for s in str(raw).split(",") if s.strip()]
 
 
 def execute_nearest_float(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0: float) -> ChatResponse:
@@ -85,6 +104,8 @@ def execute_nearest_float(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
                 "nearest_float_id": str(top_float["float_id"]),
                 "distance_km": float(top_float.get("distance_km", 0.0)),
                 "target_coords": {"lat": intent.lat, "lon": intent.lon},
+                # Sprint 2 (Visualization Contract): identity of the marker set.
+                "matching_float_ids": [m.float_id for m in map_data],
             }
             return ChatResponse(
                 intent="nearest_float",
@@ -106,9 +127,98 @@ def execute_radius_search(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
     lake = deps.lake
     # If user says "near arabian sea" but has region, no coordinates
     if (intent.lat is None or intent.lon is None) and intent.region:
+        # Sprint 5 (Bugs 1/3/4): named-region scope is REGION GEOMETRY —
+        # never point+radius. Two source paths, both radius-free:
+        #   * regions the lake tags from the ontology polygons
+        #     (INDIA_QUERY_REGIONS: arabian_sea / bay_of_bengal) — the stored
+        #     polygon-derived tag is the most precise geometry;
+        #   * every other named region with ontology geometry (indian_ocean,
+        #     …) — the ontology bounding region (the lake's region_tag
+        #     taxonomy does not cover it; a tag partition would under-report).
+        # The alive filter (report-recency semantics, Sprint P3 #2) now
+        # applies to region scopes exactly as it does to coordinate scopes,
+        # and markers of an alive-filtered result are stamped "active" so
+        # the map encodes the requested status (Bug 4).
+        region_def = REGIONS.get(intent.region)
+        alive_filter = intent.operational_filter == "alive"
+        alive_date_start, alive_date_end = None, None
+        if alive_filter:
+            alive_date_start, alive_date_end = _build_alive_window(intent)
+        alive_note = ""
+        if alive_filter:
+            if intent.year is not None:
+                alive_note = f" (alive during {alive_date_start} to {alive_date_end})"
+            else:
+                alive_note = f" (currently alive: >=1 profile in the last {settings.alive_recent_months} months)"
+
+        def _summary(n: int, ids: list[str]) -> dict:
+            out = {
+                "matched_records": n,
+                "region": intent.region,
+                "alive_filter": alive_filter,
+                "alive_date_start": alive_date_start,
+                "alive_date_end": alive_date_end,
+                # Sprint 2 (Visualization Contract): the marker set,
+                # by identity, beside its size.
+                "matching_float_ids": ids,
+            }
+            if region_def is not None and region_def.bbox:
+                # Sprint 5 (Bug 6): the named region's ontology bounding
+                # region — the map zooms to the region, not to India.
+                out["region_bounds"] = dict(region_def.bbox)
+            return out
+
         if lake and (lake.is_available() or lake.is_phase2_available()):
             try:
-                df = lake.get_profile_index(region=intent.region, limit=500)
+                df = pd.DataFrame()
+                if intent.region in INDIA_QUERY_REGIONS:
+                    df = lake.get_profile_index(region=intent.region, limit=500)
+                    if not df.empty and alive_date_start:
+                        df = df[df["date"].astype(str) >= str(alive_date_start)]
+                    if not df.empty and alive_date_end:
+                        df = df[df["date"].astype(str) <= str(alive_date_end)]
+                    if df.empty:
+                        # Sprint 2 (Visualization Contract): get_profile_index
+                        # is phase2-only; lakes without it still hold the same
+                        # floats in their levels parquet. Fall back to the same
+                        # count-shaped source (identical columns are renamed
+                        # to the profile_index-ish shape the loop expects).
+                        dfm = lake.query_matching_floats(
+                            region=intent.region,
+                            date_start=alive_date_start,
+                            date_end=alive_date_end,
+                            limit=500,
+                        )
+                        df = dfm.rename(
+                            columns={"last_profile_date": "date", "lat": "latitude", "lon": "longitude"}
+                        )
+                elif region_def is not None and region_def.bbox:
+                    dfm = lake.query_matching_floats(
+                        region=None,
+                        date_start=alive_date_start,
+                        date_end=alive_date_end,
+                        limit=500,
+                    )
+                    if not dfm.empty:
+                        bbox = region_def.bbox
+                        dfm = dfm[
+                            (dfm["lat"] >= bbox["lat_min"]) & (dfm["lat"] <= bbox["lat_max"])
+                            & (dfm["lon"] >= bbox["lon_min"]) & (dfm["lon"] <= bbox["lon_max"])
+                        ]
+                    df = dfm.rename(
+                        columns={"last_profile_date": "date", "lat": "latitude", "lon": "longitude"}
+                    )
+                else:
+                    dfm = lake.query_matching_floats(
+                        region=intent.region,
+                        date_start=alive_date_start,
+                        date_end=alive_date_end,
+                        limit=500,
+                    )
+                    df = dfm.rename(
+                        columns={"last_profile_date": "date", "lat": "latitude", "lon": "longitude"}
+                    )
+
                 if not df.empty:
                     latest = df.sort_values("date").groupby("float_id", as_index=False).last()
                     map_data = []
@@ -118,7 +228,14 @@ def execute_radius_search(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
                         lon_val = float(row.get("longitude", row.get("lon", 0)) or 0)
                         if not lat_val or not lon_val:
                             continue
-                        status = str(row.get("status", "unknown")) if "status" in row else "unknown"
+                        if alive_filter:
+                            # Sprint 5 (Bug 4): the alive filter passed ⇒ the
+                            # float is operationally active (report-recency
+                            # definition); the marker must show it.
+                            status = "active"
+                        else:
+                            status = str(row.get("status", "unknown")) if "status" in row else "unknown"
+                        marker_vars = _row_sensor_list(row)
                         map_data.append(
                             MapData(
                                 float_id=fid,
@@ -126,22 +243,30 @@ def execute_radius_search(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
                                 longitude=lon_val,
                                 profile_date=str(row.get("date", ""))[:10] if pd.notna(row.get("date")) else None,
                                 dac=str(row.get("dac", row.get("institution", "")) or ""),
-                                variables=[],
+                                variables=marker_vars,
                                 selected=False,
                                 status=status,
-                                network=_derive_marker_network([]),
+                                network=_derive_marker_network(marker_vars),
                                 wmo_id=fid,
                                 region_tag=_marker_region_tag(lat_val, lon_val),
                             )
                         )
-                    msg = f"Found {len(map_data)} float(s) in {intent.region.replace('_',' ').title()} region."
+                    msg = f"Found {len(map_data)} float(s) in {intent.region.replace('_',' ').title()} region{alive_note}."
                     return ChatResponse(
                         intent="radius_search",
                         message=msg,
                         figure=None,
-                        data_summary={"matched_records": len(map_data), "region": intent.region},
+                        data_summary=_summary(len(map_data), [m.float_id for m in map_data]),
                         map_data=map_data,
                     )
+                # Honest zero: the lake answered; the (geometry + filters)
+                # legitimately matched nothing. Never the degraded-lake text.
+                msg = f"Found 0 float(s) in {intent.region.replace('_',' ').title()} region{alive_note}."
+                return ChatResponse(
+                    intent="radius_search",
+                    message=msg,
+                    data_summary=_summary(0, []),
+                )
             except Exception as exc:
                 logger.warning("Region fallback for radius_search failed: %s", exc)
         return ChatResponse(
@@ -200,7 +325,13 @@ def execute_radius_search(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
         map_data = []
         for _, row in df.iterrows():
             fid = str(row["float_id"])
-            status = str(row.get("status", "unknown"))
+            if alive_filter:
+                # Sprint 5 (Bug 4): alive filter passed (>=1 report inside
+                # the alive window) ⇒ operationally active — the marker
+                # must use the active colour, not a stale registry value.
+                status = "active"
+            else:
+                status = str(row.get("status", "unknown"))
             sensors = str(row.get("sensors", ""))
             last_date = str(row.get("last_report_date", ""))[:10]
             lat_val = float(row["lat"]) if pd.notna(row["lat"]) else 0.0
@@ -258,6 +389,8 @@ def execute_radius_search(deps: ExecutionDeps, intent: ParsedIntent, pipeline_t0
             "alive_filter": alive_filter,
             "alive_date_start": alive_date_start,
             "alive_date_end": alive_date_end,
+            # Sprint 2 (Visualization Contract): identity of the marker set.
+            "matching_float_ids": [m.float_id for m in map_data],
         }
         return ChatResponse(
             intent="radius_search",

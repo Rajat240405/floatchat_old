@@ -45,6 +45,25 @@ _DATA_REQUEST_VERBS = re.compile(
 )
 
 
+def _find_floats_params(intent: ParsedIntent) -> dict[str, Any]:
+    """Terminal-op parameters for float discovery (Sprint 5, Bugs 1/3).
+
+    Region search and radius search are distinct concepts:
+
+    * named-region scope ("Arabian Sea") → REGION geometry — no radius is
+      invented (execution filters inside the named region directly);
+    * point scope (raw coordinates / named place) → POINT geometry + radius
+      — the user's explicit radius or the gazetteer's place radius, else
+      the established 500 km default for bare coordinates.
+    """
+    region_scoped = intent.region is not None and intent.lat is None
+    return {
+        "lat": intent.lat,
+        "lon": intent.lon,
+        "radius_km": None if region_scoped else (intent.radius_km or 500.0),
+    }
+
+
 @dataclass
 class Operation:
     name: str
@@ -118,6 +137,17 @@ def plan_from_intent(intent: ParsedIntent, message: str = "") -> Plan:
             params["month_window"] = intent.month_window
         elif intent.month:
             params["month"] = intent.month
+    else:
+        params = {}
+    # Sprint 1 (Bug 2): an open-ended temporal window is part of the plan.
+    # "after 2023" is not "year = 2023" — surface the resolved ISO bounds so
+    # the plan shows filter_year(after=…/before=…) instead of dropping the
+    # constraint entirely.
+    if intent.temporal_date_start:
+        params["after"] = intent.temporal_date_start
+    if intent.temporal_date_end:
+        params["before"] = intent.temporal_date_end
+    if params:
         ops.append(Operation("filter_year", params))
     if intent.depth_min is not None or intent.depth_max is not None:
         ops.append(Operation("filter_depth", {
@@ -135,10 +165,7 @@ def plan_from_intent(intent: ParsedIntent, message: str = "") -> Plan:
         if intent.intent in ("profile_plot", "region_search"):
             ops.append(Operation("plot_profile", {}))
         elif intent.intent == "radius_search":
-            ops.append(Operation("find_floats", {
-                "lat": intent.lat, "lon": intent.lon,
-                "radius_km": intent.radius_km or 500.0,
-            }))
+            ops.append(Operation("find_floats", _find_floats_params(intent)))
         if intent.intent in (
             "profile_plot", "region_search", "time_series",
             "hovmoller", "ts_diagram", "comparison_plot",
@@ -158,10 +185,10 @@ def plan_from_intent(intent: ParsedIntent, message: str = "") -> Plan:
             "lat": intent.lat, "lon": intent.lon, "limit": intent.limit,
         }))
     elif intent.intent == "radius_search":
-        ops.append(Operation("find_floats", {
-            "lat": intent.lat, "lon": intent.lon,
-            "radius_km": intent.radius_km or 500.0,
-        }))
+        # Sprint 5 (Bugs 1/3): named-region scopes plan a radius-free
+        # find_floats (region geometry); point scopes keep the explicit or
+        # gazetteer radius, else the established 500 km default.
+        ops.append(Operation("find_floats", _find_floats_params(intent)))
     elif intent.intent == "count_aggregate":
         ops.append(Operation("count_floats", {"existence_check": intent.existence_check}))
     elif intent.intent == "time_series":

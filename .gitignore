@@ -1,8 +1,19 @@
 .venv/
+venv/
 .cache/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 __pycache__/
 *.egg-info/
+*.py[cod]
+*.pyd
+
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
 
 .env
 .env.*

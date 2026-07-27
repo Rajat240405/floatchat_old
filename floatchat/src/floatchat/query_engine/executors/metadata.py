@@ -292,6 +292,11 @@ def execute_count_aggregate(deps: ExecutionDeps, intent: ParsedIntent, pipeline_
                     "existence": tot_f > 0,
                     "center": {"lat": intent.lat, "lon": intent.lon},
                     "radius_km": radius_km,
+                    # Sprint 2 (Visualization Contract): identity of the set
+                    # the markers on the map come from.
+                    "matching_float_ids": sorted(
+                        {str(m.float_id) for m in map_data if m.float_id}
+                    ),
                 }
                 return ChatResponse(
                     intent="count_aggregate",
@@ -311,13 +316,29 @@ def execute_count_aggregate(deps: ExecutionDeps, intent: ParsedIntent, pipeline_
         months=getattr(intent, "month_window", None),  # P3 #3: season window
         float_id=intent.float_id,
         variables=intent.variables,
+        # Sprint 1 (Bug 2): open-ended temporal window (optional; when absent
+        # the lake applies no date predicate and behaviour is unchanged).
+        date_start=intent.temporal_date_start,
+        date_end=intent.temporal_date_end,
     ) if lake else {"total_profiles": 0, "total_floats": 0, "has_data": False}
 
     tot_p = stats.get("total_profiles", 0)
     tot_f = stats.get("total_floats", 0)
 
     location_desc = intent.region.replace("_", " ").title() if intent.region else (f"Float {intent.float_id}" if intent.float_id else "India Region")
-    time_desc = f" in {intent.year}" if intent.year else ""
+    if intent.year:
+        time_desc = f" in {intent.year}"
+    else:
+        # Sprint 1 (Bug 2): state the applied open-ended window factually.
+        _s, _e = intent.temporal_date_start, intent.temporal_date_end
+        if _s and _e:
+            time_desc = f" between {_s} and {_e}"
+        elif _s:
+            time_desc = f" from {_s} onward"
+        elif _e:
+            time_desc = f" until {_e}"
+        else:
+            time_desc = ""
     var_desc = f" for {', '.join(intent.variables)}" if intent.variables else ""
 
     if intent.existence_check:
@@ -339,6 +360,61 @@ def execute_count_aggregate(deps: ExecutionDeps, intent: ParsedIntent, pipeline_
     else:
         msg = f"Data count for {location_desc}{var_desc}{time_desc}: {tot_p:,} total profile(s) across {tot_f:,} unique float(s)."
 
+    # Sprint 2 (Visualization Contract): the count identifies a float SET —
+    # expose it. The count itself still comes from query_count_aggregate
+    # (single source for the number); query_matching_floats uses the same
+    # predicates and data-path fallbacks, so the chat, the id list, and the
+    # map always describe one set. Markers follow the established 500-row
+    # family cap; failures degrade to zero markers, never a wrong answer.
+    map_data: list[MapData] = []
+    matching_ids: list[str] = []
+    if lake and tot_f > 0:
+        try:
+            dfm = lake.query_matching_floats(
+                region=intent.region,
+                year=intent.year,
+                month=intent.month,
+                months=getattr(intent, "month_window", None),
+                float_id=intent.float_id,
+                variables=intent.variables,
+                date_start=intent.temporal_date_start,
+                date_end=intent.temporal_date_end,
+                limit=500,
+            )
+            for _, row in dfm.iterrows():
+                try:
+                    fid = str(row["float_id"])
+                    lat_val = float(row["lat"]) if pd.notna(row["lat"]) else None
+                    lon_val = float(row["lon"]) if pd.notna(row["lon"]) else None
+                    if lat_val is None or lon_val is None:
+                        continue
+                    marker_vars = intent.variables or []
+                    map_data.append(
+                        MapData(
+                            float_id=fid,
+                            latitude=lat_val,
+                            longitude=lon_val,
+                            profile_date=(
+                                str(row.get("last_profile_date", ""))[:10]
+                                if pd.notna(row.get("last_profile_date"))
+                                else None
+                            ),
+                            dac=str(row.get("dac", "")),
+                            variables=marker_vars,
+                            selected=False,
+                            status="unknown",
+                            network=_derive_marker_network(marker_vars),
+                            wmo_id=fid,
+                            region_tag=_marker_region_tag(lat_val, lon_val),
+                        )
+                    )
+                except Exception:
+                    continue
+            matching_ids = [m.float_id for m in map_data]
+        except Exception as exc:
+            logger.warning("count matching-floats fetch failed (count answer unaffected): %s", exc)
+            map_data, matching_ids = [], []
+
     summary = {
         "matched_records": tot_p,
         "unique_floats": tot_f,
@@ -347,6 +423,8 @@ def execute_count_aggregate(deps: ExecutionDeps, intent: ParsedIntent, pipeline_
             "min": stats.get("min_date"),
             "max": stats.get("max_date"),
         },
+        # Sprint 2 (Visualization Contract): the floats behind the count.
+        "matching_float_ids": matching_ids,
     }
 
     return ChatResponse(
@@ -354,5 +432,5 @@ def execute_count_aggregate(deps: ExecutionDeps, intent: ParsedIntent, pipeline_
         message=msg,
         figure=None,
         data_summary=summary,
-        map_data=[],
+        map_data=map_data,
     )
