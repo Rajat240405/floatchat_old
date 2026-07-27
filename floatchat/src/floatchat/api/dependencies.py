@@ -58,6 +58,9 @@ _llm_service: OllamaLLMService | None = None
 _query_classifier: QueryClassifier | None = None
 _conversation_manager: InMemoryConversationManager | None = None
 _query_normalizer: AbstractQueryNormalizer | None = None
+_semantic_understanding = None  # SemanticUnderstandingService | None (Phase 2)
+_conversation_intelligence = None  # ConversationIntelligence | None (Phase 4)
+_scientific_response_layer = None  # ScientificResponseLayer | None (Phase 5)
 _scientific_llm_service: OllamaLLMService | None = None
 _scientific_narrator: ScientificNarrator | None = None
 _scientific_feature_extractor: ScientificFeatureExtractor | None = None
@@ -331,6 +334,58 @@ def get_conversation_manager() -> AbstractConversationManager:
     return _conversation_manager
 
 
+def get_conversation_intelligence():
+    """Return the Phase 4 deterministic Conversation Intelligence layer.
+
+    Built only when the semantic-understanding feature flag is on — the
+    layer governs the semantic path (reference resolution before the
+    Semantic Reasoner). ``None`` keeps the app byte-identical to legacy
+    behaviour when the flag is off.
+    """
+    global _conversation_intelligence
+    if _conversation_intelligence is None and settings.semantic_understanding_enabled:
+        from floatchat.conversation.intelligence import ConversationIntelligence
+
+        _conversation_intelligence = ConversationIntelligence()
+    return _conversation_intelligence
+
+
+def get_scientific_response_layer():
+    """Return the Phase 5 deterministic Scientific Response Layer.
+
+    Always constructed: the layer itself honours
+    ``settings.scientific_response_enabled`` at compose time, so the flag
+    can flip without restarting the DI graph.
+    """
+    global _scientific_response_layer
+    if _scientific_response_layer is None:
+        from floatchat.scientific_response import ScientificResponseLayer
+
+        _scientific_response_layer = ScientificResponseLayer()
+    return _scientific_response_layer
+
+
+def get_semantic_understanding():
+    """Return the Phase 2 semantic understanding service, or None when disabled.
+
+    The service is always constructed when the feature flag is on; its LLM
+    provider is built lazily on first use. When configuration prevents a
+    usable call (flag off, LLM disabled, model unset), the service raises
+    SemanticUnavailableError at call time and the resolver falls back to the
+    legacy regex-first pipeline — construction here never touches the network.
+    """
+    global _semantic_understanding
+    if _semantic_understanding is None and settings.semantic_understanding_enabled:
+        from floatchat.understanding import SemanticUnderstandingService
+
+        _semantic_understanding = SemanticUnderstandingService(
+            # Phase 4: deterministic Conversation Intelligence wired into the
+            # semantic path (reference resolution + focus tracking).
+            conversation_intelligence=get_conversation_intelligence(),
+        )
+    return _semantic_understanding
+
+
 def get_intent_resolver(
     parser: Annotated[AbstractIntentParser, Depends(get_intent_parser)],
     conversation_manager: Annotated[
@@ -343,6 +398,9 @@ def get_intent_resolver(
             parser=parser,
             compiler=LLMIntentCompiler(),
             conversation_manager=conversation_manager,
+            # Phase 2: semantic understanding is the primary path; the regex
+            # parser (+ compiler) is its fallback behind the feature flag.
+            understanding=get_semantic_understanding(),
         )
     return _intent_resolver
 

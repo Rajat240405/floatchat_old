@@ -115,3 +115,19 @@ def build_compiler_llm_service() -> AbstractLLMService:
         temperature=settings.extractor_temperature,
         max_tokens=256,
     )
+
+
+def build_semantic_llm_service() -> AbstractLLMService:
+    """Build the LLM service for the Phase 2 Semantic Understanding Layer.
+
+    Same provider toggle (``FLOATCHAT_LLM_PROVIDER``) and graceful degradation
+    as the compiler, tuned for structured understanding output (JSON mode,
+    deterministic temperature, dedicated ``semantic_*`` settings).
+    """
+    return build_llm_service(
+        json_mode=True,
+        model=settings.semantic_model,
+        timeout=settings.semantic_timeout,
+        temperature=settings.semantic_temperature,
+        max_tokens=settings.semantic_max_tokens,
+    )

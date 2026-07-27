@@ -155,6 +155,37 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FLOATCHAT_GROQ_API_KEY", "GROQ_API_KEY"),
     )
 
+    # ── Semantic Understanding Layer (FloatChat 2.0 — Phase 2) ──
+    # LLM-first understanding: the message is understood by an LLM into a
+    # SemanticUnderstanding (the *understanding contract*), which a
+    # deterministic converter then grounds against the domain ontology and
+    # converts into the ParsedIntent *execution contract*. The legacy regex
+    # parser (+ LLM compiler) remains fully intact as the fallback path: any
+    # semantic-layer failure (disabled flag, no provider, unusable output)
+    # degrades to the pre-Phase-2 regex-first pipeline.
+    semantic_understanding_enabled: bool = True
+    # Empty string disables the layer even when the flag is on (mirrors the
+    # extractor_model convention above).
+    semantic_model: str = "qwen2.5:3b"
+    semantic_timeout: float = 15.0
+    semantic_temperature: float = 0.0
+    semantic_max_tokens: int = 768
+    # Below this LLM-reported confidence the deterministic converter answers
+    # with a structured clarification request instead of a ParsedIntent.
+    semantic_min_confidence: float = 0.4
+
+    # Scientific Response Layer (FloatChat 2.0 Phase 5) — deterministic,
+    # post-execution presentation. When enabled, successful data responses
+    # are recomposed into the scientific structure (narration / summary /
+    # context used / assumptions / follow-ups). Execution, planning, plots
+    # and query results are unaffected; disabling restores the engine's
+    # original message text. FLOATCHAT_SCIENTIFIC_RESPONSE_ENABLED=false
+    scientific_response_enabled: bool = True
+    # Optional transparency/debug section ("Request interpretation") built
+    # from the Phase-3 reasoning trace. Off by default.
+    # FLOATCHAT_SCIENTIFIC_REASONING_EXPLANATION_ENABLED=true
+    scientific_reasoning_explanation_enabled: bool = False
+
     # Logging
     log_level: str = "INFO"
 

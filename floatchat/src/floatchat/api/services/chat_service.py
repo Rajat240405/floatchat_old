@@ -25,6 +25,7 @@ from typing import Any
 
 from floatchat.config import settings
 from floatchat.conversation.base import AbstractConversationManager
+from floatchat.conversation.intelligence import ConversationIntelligence
 from floatchat.api.schemas import ChatRequest
 from floatchat.api.services.floats_service import build_available_plots_response
 from floatchat.exceptions import FloatChatError, IntentParseError
@@ -37,6 +38,8 @@ from floatchat.llm_service.knowledge_base import KnowledgeBase
 from floatchat.models import ChatResponse, ParsedIntent
 from floatchat.ontology.intents import SCIENTIFIC_FOLLOWUP_INTENTS
 from floatchat.query_engine.engine import QueryEngine
+from floatchat.scientific_response import ScientificResponseLayer
+from floatchat.understanding import SemanticClarificationNeeded
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +393,9 @@ def handle_chat(
     query_engine: QueryEngine,
     conversation_manager: AbstractConversationManager,
     knowledge_base: KnowledgeBase,
+    *,
+    conversation_intelligence: "ConversationIntelligence | None" = None,
+    response_layer: "ScientificResponseLayer | None" = None,
 ) -> ChatResponse:
     """Convert a natural-language message into a data visualization or answer.
 
@@ -406,6 +412,25 @@ def handle_chat(
         request.message,
         request.session_id,
     )
+
+    # --- Step 0: Conversation control commands (Phase 4) ---------------- #
+    # Deterministic session management (e.g. "Clear context.") — not intent
+    # routing: it never reaches classification, parsing, or the engine.
+    if conversation_intelligence is not None:
+        control = conversation_intelligence.handle_control(
+            request.message, request.session_id
+        )
+        if control is not None:
+            conversation_manager.clear_context(request.session_id)
+            response = ChatResponse(
+                intent="general_chat",
+                message=control.acknowledgment,
+                figure=None,
+                data_summary={"action": control.action, "source": "conversation_intelligence"},
+                map_data=[],
+            )
+            _log_response(response, request_t0)
+            return response
 
     try:
         # --- Step 1: Classify ------------------------------------------- #
@@ -501,10 +526,24 @@ def handle_chat(
             return response
 
         # --- Step 5: DATA_QUERY — canonical intent pipeline ------------- #
-        # Regex, optional compiler fallback, validation, and context enrichment
-        # are now owned by one resolver. The route only plans and executes.
+        # Semantic understanding (Phase 2), optional compiler fallback,
+        # validation, and context enrichment are owned by one resolver.
+        # The route only plans and executes.
         try:
             intent = intent_resolver.resolve(request.message, request.session_id)
+        except SemanticClarificationNeeded as exc:
+            # Phase 2: the semantic layer determined that the request is
+            # ambiguous/incomplete and produced a targeted clarification
+            # question instead of guessing values. Answered with the existing
+            # "clarification" response pseudo-intent (schema unchanged).
+            logger.info("Semantic clarification requested: %s", exc.message[:80])
+            return ChatResponse(
+                intent="clarification",
+                message=exc.message,
+                figure=None,
+                data_summary={"source": "semantic_understanding"},
+                map_data=[],
+            )
         except IntentParseError as exc:
             ctx = (
                 conversation_manager.get_context(request.session_id)
@@ -621,6 +660,20 @@ def handle_chat(
             )
 
         response = query_engine.execute(intent)
+        # --- Step 6: Scientific Response Layer (Phase 5) ---------------- #
+        # Deterministic, post- execution presentation: recomposes only the
+        # message/data_summary envelope. The engine's result (figure, map
+        # data, query stats) passes through byte-identical; the original
+        # engine message is preserved under data_summary["engine_message"].
+        if response_layer is not None:
+            outcome = getattr(intent_resolver, "last_semantic_outcome", None)
+            response = response_layer.compose(
+                response,
+                intent=intent,
+                context_resolutions=getattr(outcome, "context_resolutions", ()) if outcome else (),
+                reasoning_rule=getattr(outcome, "reasoning_rule", None) if outcome else None,
+                reasoning_resolutions=getattr(outcome, "reasoning_resolutions", ()) if outcome else (),
+            )
         conversation_manager.update_context(request.session_id, intent, response)
         _log_response(response, request_t0)
         return response

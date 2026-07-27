@@ -36,6 +36,12 @@ _test_settings.data_lake_root = str(FIXTURE_LAKE_ROOT)
 # machine-specific. Forcing it off makes the suite hermetic.
 _test_settings.data_lake_phase2_enabled = False
 _test_settings.data_lake_dir = ""
+# FloatChat 2.0 Phase 2 (Semantic Understanding Layer): OFF for the legacy
+# suite so the existing tests exercise the pre-Phase-2 regex-first pipeline
+# deterministically on ANY machine (including dev boxes with a live Ollama
+# or cloud API keys configured). The understanding-layer tests enable it and
+# inject stub LLM services explicitly per test (monkeypatch auto-restores).
+_test_settings.semantic_understanding_enabled = False
 
 from floatchat.models import MetadataRecord, ParsedIntent
 from floatchat.repository_service.dataset_wrapper import NetCDFDataset

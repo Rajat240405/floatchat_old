@@ -11,6 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from floatchat.api.dependencies import (
+    get_conversation_intelligence,
     get_conversation_manager,
     get_intent_parser,
     get_intent_resolver,
@@ -18,6 +19,7 @@ from floatchat.api.dependencies import (
     get_llm_service,
     get_query_classifier,
     get_query_engine,
+    get_scientific_response_layer,
 )
 from floatchat.api.schemas import ChatRequest
 from floatchat.api.services.chat_service import handle_chat
@@ -44,6 +46,10 @@ def chat(
         AbstractConversationManager, Depends(get_conversation_manager)
     ],
     knowledge_base: Annotated[KnowledgeBase, Depends(get_knowledge_base)],
+    conversation_intelligence: Annotated[
+        object, Depends(get_conversation_intelligence)
+    ],
+    response_layer: Annotated[object, Depends(get_scientific_response_layer)],
 ) -> ChatResponse:
     """Convert a natural-language message into a data visualization or answer.
 
@@ -63,4 +69,6 @@ def chat(
         query_engine,
         conversation_manager,
         knowledge_base,
+        conversation_intelligence=conversation_intelligence,
+        response_layer=response_layer,
     )
